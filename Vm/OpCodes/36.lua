@@ -8,7 +8,7 @@ return function(inst,shiftAmount,constant,settings)
 	local C:PROTOHERE: = {}
 	for i, v in pairs(rawConsts:PROTOHERE:) do
 		v = gsub(v, dot, function(bb)
-			if table.find({11,4,7,6},byte(bb)) then
+			if tfind({11,4,7,6},byte(bb)) then
 				return bb 
 			end
 			return char(byte(bb) +:CONSTANT_SHIFTER:) 

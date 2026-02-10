@@ -200,8 +200,9 @@ return function(parasedBytecode)
 		for i = 1, #shuffledConstants do
 			local const = shuffledConstants[i]
 			if not const then
-				-- add junk constant
-				constantsStr = constantsStr .. '(""),'
+				-- add junk constant (encrypted empty string)
+				local junkKey = tostring(math.random(100,3000))
+				constantsStr = constantsStr .. '(decrypt("", "' .. junkKey .. '")),'
 			else
 				local costAt = type(const) == "table" and tostring(const.Value) or tostring(const)
 				local byted = costAt
@@ -230,10 +231,17 @@ return function(parasedBytecode)
 					byted = byted..string.char(6)
 				end
 
-				constantsStr = constantsStr..('%s("%s")%s,'):format(tonumber(const) and "(" or "",byted,tonumber(const) and ")" or "")
+				-- Encrypt the raw bytes directly (avoids pattern-matching issues with " and \ in byte-shifted data)
+				local key = tostring(math.random(100,3000))
+				local encryptedData = stringEncryptorFunction(byted, key)
+				local safeEncrypted = ""
+				for ci = 1, #encryptedData do
+					safeEncrypted = safeEncrypted .. string.format("\\%03d", string.byte(encryptedData, ci))
+				end
+
+				constantsStr = constantsStr..('%s(decrypt("%s", "%s"))%s,'):format(tonumber(const) and "(" or "",safeEncrypted,key,tonumber(const) and ")" or "")
 			end
 		end
-		constantsStr = stringEncryptor(constantsStr)
 		return constantsStr
 	end
 

@@ -53,7 +53,7 @@ return [=[
 		return a
 	end
 	local _, err = pcall(function() 
-		Env["__newindex"](1) 
+		Env[__newindex](1) 
 	end)
 	local Tamper = false
 	Env[__index] = function() 

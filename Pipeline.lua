@@ -17,7 +17,16 @@ return function(inputFile,outputTo)
     inputHandle:write(addToInput .. "\n" .. savedInput)
     inputHandle:close()
  
-
+    -- Insert anti-tamper
+    if settings.AntiTamper then
+        _G.display("Adding Anti-Tamper...", "green")
+        local rawInput = _G.readFile(inputFile)
+        local combined = antitamper .. " \n " .. rawInput
+        local inputHandle = io.open(inputFile, "w")
+        inputHandle:write(combined)
+        inputHandle:close()
+    end
+    
     -- Remove all LuaU specific syntax 
     if settings.LuaUCompatibility then
         _G.display("LuaU Compatibility mode enabled.", "yellow")
@@ -45,10 +54,6 @@ return function(inputFile,outputTo)
     -- Insert anti-env logger
     _G.display("Adding Anti-Env Logger...", "green")
     vmTree = vmTree:gsub(":INSERTENVLOG:", antiEnvLogger)
-
-    -- Insert anti-tamper
-    _G.display("Adding Anti-Tamper...", "green")
-    vmTree = vmTree:gsub(":ANTITAMPER:", antitamper)
 
     -- Minify
     if settings.Minify then

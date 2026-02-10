@@ -13,7 +13,7 @@ return [=[
 			local Checks,ConstantsDecode = :INSERTENVLOG:,(function() -- Constants decode
 				for i, v in pairs(Constants) do
 					v = gsub(v, dot, function(bb)
-						if table.find({11,4,7,6},byte(bb)) then
+						if tfind({11,4,7,6},byte(bb)) then
 							return bb 
 						end
 						return char(byte(bb) +:CONSTANT_SHIFTER:) 
@@ -23,7 +23,6 @@ return [=[
 						local lastByte = byte(toSend, len)
 						if lastByte == 11 then
 							return tonumber(sub(toSend, pointer, len - pointer))
-
 						elseif lastByte == 4 then
 							local removedByte = sub(toSend, pointer, len - pointer)
 							local decrypted = {}
