@@ -40,8 +40,36 @@ return function(inputFile,outputTo)
     end
 
     -- Compile to bytecode
-    os.execute("luac -o Input/luac.out " .. inputFile)
+    _G.display("Compiling to bytecode...", "green")
+    local compileSuccess, compileType, compileCode = os.execute("luac -o Input/luac.out " .. inputFile)
+    
+    if compileSuccess == 0 or compileSuccess == true then
+        -- everythings fine
+    else
+        _G.display("luac compilation failed! (exit code: " .. tostring(compileCode or compileSuccess) .. ")", "red")
+
+        -- Restore file
+        savedInput = savedInput:gsub("\r\n", "\n"):gsub("\r", "\n")
+        local restoreHandle = io.open(inputFile, "wb")
+        restoreHandle:write(savedInput)
+        restoreHandle:close()
+
+        return
+    end
+
     local bytecode = _G.readFile("Input/luac.out")
+
+    if not bytecode or #bytecode == 0 then
+        _G.display("luac produced no output! Check your input file for syntax errors.", "red")
+
+        -- Restore
+        savedInput = savedInput:gsub("\r\n", "\n"):gsub("\r", "\n")
+        local restoreHandle = io.open(inputFile, "wb")
+        restoreHandle:write(savedInput)
+        restoreHandle:close()
+
+        return
+    end
 
     -- Parser bytecode
     _G.display("Parsering bytecode...", "green")

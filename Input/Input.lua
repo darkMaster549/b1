@@ -1,1 +1,1 @@
-print(_OBFUSCATED)
+print("hello")
