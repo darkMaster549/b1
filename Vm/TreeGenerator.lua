@@ -1,22 +1,23 @@
--- i rebuilt this agian
+-- i rebuilt this again --
+-- i won't encrpt the header for now --
 math.randomseed(os.time())
 package.path = package.path .. ";./Vm/?.lua"
 
 return function(parsed)
 	parsed = parsed[2]
 
-	local settings  = require("Input.Settings")
-	local encStr    = require("Resources.EncryptStrings")
-	local encFn     = encStr(nil, true)
-	local CFF       = require("Resources.ControlFlowFlattening")
-	local junkConsts= require("Resources.Templates.FakeConstants")
-	local header    = require("Resources.Templates.Header")
-	local vm        = require("Resources.Templates.Vm")
-	local decTpl    = require("Resources.Templates.DecryptStringsTemplate")
+	local settings   = require("Input.Settings")
+	local encStr     = require("Resources.EncryptStrings")
+	local encFn      = encStr(nil, true)
+	local CFF        = require("Resources.ControlFlowFlattening")
+	local junkConsts = require("Resources.Templates.FakeConstants")
+	local header     = require("Resources.Templates.Header")
+	local vm         = require("Resources.Templates.Vm")
+	local decTpl     = require("Resources.Templates.DecryptStringsTemplate")
 
 	local decKey, cShift = tostring(_G.Random(100,400)), tostring(_G.Random(3,10))
 	print("CONSTANT SHIFT AMOUNT:", cShift)
-	if settings.EncryptStrings then header = encStr(header, decKey) end
+	-- header stays unencrypted intentionally
 
 	local protoAt, tree, protosCount, scannedProtos = 0, "", 0, {}
 	local shiftAmt = settings.ConstantProtection and _G.Random(10,20) or 0
@@ -102,7 +103,6 @@ return function(parsed)
 		return out
 	end
 
-	-- track proto offsets into the base consts table
 	local protoOffsets = {}
 
 	local function getMappedIdx(orig, id)
@@ -178,7 +178,6 @@ return function(parsed)
 				local name = "PROTOTYPE"..protoAt.."HERE"
 				_G.display("--> Reading prototype: "..protoAt..(ex or ""),"yellow")
 
-				-- record offset then merge proto constants into base consts
 				local offset = #consts
 				local protoMapId = "proto_"..protoAt
 				protoOffsets[protoMapId] = offset
@@ -186,18 +185,17 @@ return function(parsed)
 					table.insert(consts, c)
 				end
 
-				-- rebuild base map with all consts merged
 				prepareMap(consts, "base")
 				_G.currentMapId = "base"
 
 				local ni = readInsts(require("Vm.Resources.ModifyInstructions")(p.Instructions, p.Constants, p.Prototypes), nil, "PROTOTYPE "..protoAt)
 
 				for pat, val in pairs({
-					["INST_"..name]            = ni,
-					["CONSTANTS_"..name]       = "", -- no separate table, all in base
-					["NUMBERPARAMS_"..name]    = tostring(p.NumUpvalues),
-					["UPVALS_"..name]          = p.NumUpvalues,
-					["STACK_LOCATION_"..name]  = ex==nil and "prevStack" or "Upvalues",
+					["INST_"..name]           = ni,
+					["CONSTANTS_"..name]      = "",
+					["NUMBERPARAMS_"..name]   = tostring(p.NumUpvalues),
+					["UPVALS_"..name]         = p.NumUpvalues,
+					["STACK_LOCATION_"..name] = ex==nil and "prevStack" or "Upvalues",
 				}) do tree = tree:gsub(pat, function() return val end) end
 
 				if p.Prototypes and #p.Prototypes>0 then
@@ -213,7 +211,6 @@ return function(parsed)
 	tree = tree..readInsts(insts,consts)
 	processProtos()
 
-	-- the consts has base plus all proto constants merged, generate one table
 	header = header:gsub("CONSTANTS_HERE_BASEVM", getConsts(consts,"base"))
 	tree = vm:format(header, settings.LuaU_Syntax and ":any" or "", tree,
 		settings.LuaU_Syntax and "pointer+=1" or "pointer = pointer + 1")
