@@ -1,3 +1,4 @@
+-- i rebuilt this agian
 math.randomseed(os.time())
 package.path = package.path .. ";./Vm/?.lua"
 
@@ -101,10 +102,14 @@ return function(parsed)
 		return out
 	end
 
+	-- track proto offsets into the base consts table
+	local protoOffsets = {}
+
 	local function getMappedIdx(orig, id)
 		id = id or _G.currentMapId or "base"
-		local m = _G.constantMaps[id]
-		return m and m.indexMap and m.indexMap[orig+1] or orig+1
+		local offset = protoOffsets[id] or 0
+		local m = _G.constantMaps["base"]
+		return m and m.indexMap and m.indexMap[orig + offset + 1] or orig + offset + 1
 	end
 	_G.getMappedConstant, _G.shiftAmount = getMappedIdx, shiftAmt
 
@@ -170,19 +175,31 @@ return function(parsed)
 			for _, pd in ipairs(cur) do
 				local p, ex = pd.proto, pd.extra
 				protoAt = protoAt+1
-				local name, mapId = "PROTOTYPE"..protoAt.."HERE", "proto_"..protoAt
+				local name = "PROTOTYPE"..protoAt.."HERE"
 				_G.display("--> Reading prototype: "..protoAt..(ex or ""),"yellow")
-				_G.currentMapId = mapId
-				prepareMap(p.Constants, mapId)
+
+				-- record offset then merge proto constants into base consts
+				local offset = #consts
+				local protoMapId = "proto_"..protoAt
+				protoOffsets[protoMapId] = offset
+				for _, c in ipairs(p.Constants) do
+					table.insert(consts, c)
+				end
+
+				-- rebuild base map with all consts merged
+				prepareMap(consts, "base")
+				_G.currentMapId = "base"
+
 				local ni = readInsts(require("Vm.Resources.ModifyInstructions")(p.Instructions, p.Constants, p.Prototypes), nil, "PROTOTYPE "..protoAt)
-				local nc = getConsts(p.Constants, mapId)
+
 				for pat, val in pairs({
 					["INST_"..name]            = ni,
-					["CONSTANTS_"..name]       = nc,
+					["CONSTANTS_"..name]       = "", -- no separate table, all in base
 					["NUMBERPARAMS_"..name]    = tostring(p.NumUpvalues),
 					["UPVALS_"..name]          = p.NumUpvalues,
 					["STACK_LOCATION_"..name]  = ex==nil and "prevStack" or "Upvalues",
 				}) do tree = tree:gsub(pat, function() return val end) end
+
 				if p.Prototypes and #p.Prototypes>0 then
 					for _, sp in pairs(p.Prototypes) do nxt[#nxt+1]={proto=sp, extra="(SUB)"} end
 				end
@@ -196,6 +213,7 @@ return function(parsed)
 	tree = tree..readInsts(insts,consts)
 	processProtos()
 
+	-- the consts has base plus all proto constants merged, generate one table
 	header = header:gsub("CONSTANTS_HERE_BASEVM", getConsts(consts,"base"))
 	tree = vm:format(header, settings.LuaU_Syntax and ":any" or "", tree,
 		settings.LuaU_Syntax and "pointer+=1" or "pointer = pointer + 1")
