@@ -5,19 +5,17 @@ package.path = package.path .. ";./Vm/?.lua"
 
 return function(parsed)
 	parsed = parsed[2]
-
+-- we remove fake constant for now --
 	local settings   = require("Input.Settings")
 	local encStr     = require("Resources.EncryptStrings")
 	local encFn      = encStr(nil, true)
 	local CFF        = require("Resources.ControlFlowFlattening")
-	local junkConsts = require("Resources.Templates.FakeConstants")
 	local header     = require("Resources.Templates.Header")
 	local vm         = require("Resources.Templates.Vm")
 	local decTpl     = require("Resources.Templates.DecryptStringsTemplate")
 
 	local decKey, cShift = tostring(_G.Random(100,400)), tostring(_G.Random(3,10))
 	print("CONSTANT SHIFT AMOUNT:", cShift)
-	-- header stays unencrypted intentionally
 
 	local protoAt, tree, protosCount, scannedProtos = 0, "", 0, {}
 	local shiftAmt = settings.ConstantProtection and _G.Random(10,20) or 0
@@ -55,18 +53,21 @@ return function(parsed)
 		_G.display(("--> OP_MISSING: (%s, [%s])"):format(num, name), "red")
 	end
 
-	local replace  = function(s,k,w) return s:gsub(":"..k:upper()..":",w) end
-	local genJunk  = function() return tostring(junkConsts[math.random(1,#junkConsts)]) end
+	local replace = function(s,k,w) return s:gsub(":"..k:upper()..":",w) end
 
 	local function shuffleConsts(tc)
-		local junkCount = math.random(2,6)
-		local total = #tc + junkCount
+		local total = #tc
 		local pos = {}
-		for i=1,total do pos[i]=i end
-		for i=total,2,-1 do local j=math.random(1,i); pos[i],pos[j]=pos[j],pos[i] end
+		for i = 1, total do pos[i] = i end
+		for i = total, 2, -1 do
+			local j = math.random(1, i)
+			pos[i], pos[j] = pos[j], pos[i]
+		end
 		local shuffled, indexMap = {}, {}
-		for i=1,#tc do shuffled[pos[i]]=tc[i]; indexMap[i]=pos[i] end
-		for i=#tc+1,total do shuffled[pos[i]]=genJunk() end
+		for i = 1, total do
+			shuffled[pos[i]] = tc[i]
+			indexMap[i] = pos[i]
+		end
 		return shuffled, indexMap
 	end
 
@@ -83,22 +84,18 @@ return function(parsed)
 		local map = _G.constantMaps[id]
 		local shuffled = map and map.shuffled or shuffleConsts(tc)
 		local out = ""
-		for i=1,#shuffled do
+		for i = 1, #shuffled do
 			local c = shuffled[i]
-			if not c then
-				out = out..'(decrypt("","'..math.random(100,3000)..'")),'
-			else
-				local raw = type(c)=="table" and tostring(c.Value) or tostring(c)
-				local byted = raw:gsub(".", function(b) return string.char(b:byte()-cShift) end)
-				if c.Type=="number"  then byted=byted..string.char(11) end
-				if c.Type=="boolean" then byted=byted..string.char(7)  end
-				if c.Type=="nil"     then byted=byted..string.char(6)  end
-				local key = tostring(math.random(100,3000))
-				local enc, safe = encFn(byted,key), ""
-				for ci=1,#enc do safe=safe..("\\%03d"):format(enc:byte(ci)) end
-				out = out..('%s(decrypt("%s","%s"))%s,'):format(
-					tonumber(c) and "(" or "", safe, key, tonumber(c) and ")" or "")
-			end
+			local raw = type(c) == "table" and tostring(c.Value) or tostring(c)
+			local byted = raw:gsub(".", function(b) return string.char(b:byte() - cShift) end)
+			if c.Type == "number"  then byted = byted .. string.char(11) end
+			if c.Type == "boolean" then byted = byted .. string.char(7)  end
+			if c.Type == "nil"     then byted = byted .. string.char(6)  end
+			local key = tostring(math.random(100, 3000))
+			local enc, safe = encFn(byted, key), ""
+			for ci = 1, #enc do safe = safe .. ("\\%03d"):format(enc:byte(ci)) end
+			out = out .. ('%s(decrypt("%s","%s"))%s,'):format(
+				tonumber(c) and "(" or "", safe, key, tonumber(c) and ")" or "")
 		end
 		return out
 	end
