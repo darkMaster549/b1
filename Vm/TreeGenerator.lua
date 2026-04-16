@@ -5,7 +5,7 @@ package.path = package.path .. ";./Vm/?.lua"
 
 return function(parsed)
 	parsed = parsed[2]
--- we remove fake constant for now --
+
 	local settings   = require("Input.Settings")
 	local encStr     = require("Resources.EncryptStrings")
 	local encFn      = encStr(nil, true)
@@ -92,10 +92,9 @@ return function(parsed)
 			if c.Type == "boolean" then byted = byted .. string.char(7)  end
 			if c.Type == "nil"     then byted = byted .. string.char(6)  end
 			local key = tostring(math.random(100, 3000))
-			local enc, safe = encFn(byted, key), ""
-			for ci = 1, #enc do safe = safe .. ("\\%03d"):format(enc:byte(ci)) end
+			local enc = encFn(byted, key)
 			out = out .. ('%s(decrypt("%s","%s"))%s,'):format(
-				tonumber(c) and "(" or "", safe, key, tonumber(c) and ")" or "")
+				tonumber(c) and "(" or "", enc, key, tonumber(c) and ")" or "")
 		end
 		return out
 	end
