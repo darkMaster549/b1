@@ -1,15 +1,9 @@
 return [=[
 local __decrypt_fn = function(d, o)
 	local codes = {}
-	for token in d:gmatch("[^,]+") do
-		local n = 0
-		for c in token:gmatch(".") do
-			local v = c:byte()
-			if v >= 48 and v <= 57 then v = v - 48
-			else v = v - 87 end
-			n = n * 36 + v
-		end
-		table.insert(codes, n)
+	for i = 1, #d, 4 do
+		local chunk = d:sub(i, i+3)
+		table.insert(codes, tonumber(chunk, 16))
 	end
 	local dict = {}
 	for i = 0, 255 do dict[i] = string.char(i) end
@@ -45,4 +39,15 @@ local __decrypt_fn = function(d, o)
 	return table.concat(out)
 end
 local decrypt = __decrypt_fn
+
+local function __unpack_consts(blob)
+	local segs = {}
+	for s in blob:gmatch("[^R]+") do table.insert(segs, s) end
+	local total = #segs / 2
+	local out = {}
+	for i = 1, total do
+		table.insert(out, __decrypt_fn(segs[i], segs[i + total]))
+	end
+	return out
+end
 ]=]
