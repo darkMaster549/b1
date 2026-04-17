@@ -1,6 +1,5 @@
 -- i rebuilt this again --
 -- i won't encrpt the header for now --
--- removed old wrapper --
 math.randomseed(os.time())
 package.path = package.path .. ";./Vm/?.lua"
 
@@ -208,12 +207,16 @@ return function(parsed)
 	tree = tree..readInsts(insts,consts)
 	processProtos()
 
-	header = header:gsub("CONSTANTS_HERE_BASEVM", getConsts(consts,"base"))
+	header = header:gsub("CONSTANTS_HERE_BASEVM", "")
 	tree = vm:format(header, settings.LuaU_Syntax and ":any" or "", tree,
 		settings.LuaU_Syntax and "pointer+=1" or "pointer = pointer + 1")
 	tree = tree:gsub(":CONSTANT_SHIFTER:", tostring(cShift))
 
-	-- Clean output: no watermark, single do...end block wrapper
-	return ([[do local Env,Constants,shiftKey,decrypt=(_ENV or getfenv()),{},0,%s %s end]]):format(
-		decTpl, tree)
+	return ([[%s
+local function __vm(Env, __d, __constFn)
+local decrypt = __d
+local __constants = __constFn()
+%s
+end
+__vm((_ENV or getfenv()), __decrypt_fn, function() return {%s} end)]]):format(decTpl, tree, getConsts(consts, "base"))
 end
