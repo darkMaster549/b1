@@ -1,5 +1,5 @@
 return [=[
-function(d, o)
+local __decrypt_fn = function(d, o)
 	local codes = {}
 	for token in d:gmatch("[^,]+") do
 		local n = 0
@@ -44,4 +44,5 @@ function(d, o)
 	end
 	return table.concat(out)
 end
+local decrypt = __decrypt_fn
 ]=]
