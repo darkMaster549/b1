@@ -1,5 +1,6 @@
 -- i rebuilt this again --
 -- i won't encrpt the header for now --
+-- removed old wrapper --
 math.randomseed(os.time())
 package.path = package.path .. ";./Vm/?.lua"
 
@@ -212,6 +213,7 @@ return function(parsed)
 		settings.LuaU_Syntax and "pointer+=1" or "pointer = pointer + 1")
 	tree = tree:gsub(":CONSTANT_SHIFTER:", tostring(cShift))
 
-	return ([[return (("%s") and (function() return(function(Env,Constants,shiftKey,decrypt)%s %s end)((_ENV or getfenv()),{},0%s) end)())]]):format(
-		settings.Watermark, settings.LuaU_Syntax and ":any" or "", tree, ","..decTpl)
+	-- Clean output: no watermark, single do...end block wrapper
+	return ([[do local Env,Constants,shiftKey,decrypt=(_ENV or getfenv()),{},0,%s %s end]]):format(
+		decTpl, tree)
 end
