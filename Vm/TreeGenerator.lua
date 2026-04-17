@@ -1,5 +1,6 @@
 -- i rebuilt this again --
 -- i won't encrpt the header for now --
+-- This Can still Obfuscte like Lauu Big Scripts due to constant Bug/LuaSrcdiet renaming --
 math.randomseed(os.time())
 package.path = package.path .. ";./Vm/?.lua"
 
@@ -83,7 +84,8 @@ return function(parsed)
 		id = id or _G.currentMapId or "base"
 		local map = _G.constantMaps[id]
 		local shuffled = map and map.shuffled or shuffleConsts(tc)
-		local out = ""
+		local encs = {}
+		local keys = {}
 		for i = 1, #shuffled do
 			local c = shuffled[i]
 			local raw = type(c) == "table" and tostring(c.Value) or tostring(c)
@@ -93,10 +95,11 @@ return function(parsed)
 			if c.Type == "nil"     then byted = byted .. string.char(6)  end
 			local key = tostring(math.random(100, 3000))
 			local enc = encFn(byted, key)
-			out = out .. ('%s(decrypt("%s","%s"))%s,'):format(
-				tonumber(c) and "(" or "", enc, key, tonumber(c) and ")" or "")
+			table.insert(encs, enc)
+			table.insert(keys, key)
 		end
-		return out
+		-- one string: enc1 R enc2 R enc3 R key1 R key2 R key3
+		return '"' .. table.concat(encs, "R") .. "R" .. table.concat(keys, "R") .. '"'
 	end
 
 	local protoOffsets = {}
@@ -218,5 +221,5 @@ local decrypt = __d
 local __constants = __constFn()
 %s
 end
-__vm((_ENV or getfenv()), __decrypt_fn, function() return {%s} end)]]):format(decTpl, tree, getConsts(consts, "base"))
+__vm((_ENV or getfenv()), __decrypt_fn, function() return __unpack_consts(%s) end)]]):format(decTpl, tree, getConsts(consts, "base"))
 end
