@@ -1,5 +1,5 @@
 -- LZW compress --
--- i will use Hex method soon --
+-- UPDATED --
 local function lzwCompress(data)
 	local dict = {}
 	for i = 0, 255 do dict[string.char(i)] = i end
@@ -22,38 +22,21 @@ local function lzwCompress(data)
 	return result
 end
 
--- Base36 encode a list of numbers
-local function base36Encode(codes)
+-- Hex encode a list of numbers (each number as 4 hex chars)
+local function hexEncode(codes)
 	local parts = {}
 	for _, code in ipairs(codes) do
-		local s = ""
-		if code == 0 then
-			s = "0"
-		else
-			local n = code
-			while n > 0 do
-				local rem = n % 36
-				s = (rem < 10 and tostring(rem) or string.char(87 + rem)) .. s
-				n = math.floor(n / 36)
-			end
-		end
-		table.insert(parts, s)
+		table.insert(parts, string.format("%04X", code))
 	end
-	return table.concat(parts, ",")
+	return table.concat(parts)
 end
 
--- Base36 decode
-local function base36Decode(str)
+-- Hex decode back to list of numbers
+local function hexDecode(str)
 	local codes = {}
-	for token in str:gmatch("[^,]+") do
-		local n = 0
-		for c in token:gmatch(".") do
-			local v = c:byte()
-			if v >= 48 and v <= 57 then v = v - 48
-			else v = v - 87 end
-			n = n * 36 + v
-		end
-		table.insert(codes, n)
+	for i = 1, #str, 4 do
+		local chunk = str:sub(i, i+3)
+		table.insert(codes, tonumber(chunk, 16))
 	end
 	return codes
 end
@@ -96,11 +79,11 @@ end
 -- Main function
 return function(scriptSource, wantsFunction)
 	if wantsFunction == true then
-		-- Returns a function: XOR then LZW then Base36
+		-- Returns a function: XOR then LZW then Hex
 		return function(str, key)
 			local xored = encrypt(str, key)
 			local codes = lzwCompress(xored)
-			return base36Encode(codes)
+			return hexEncode(codes)
 		end
 	end
 
@@ -108,7 +91,7 @@ return function(scriptSource, wantsFunction)
 		local key = tostring(math.random(100, 3000))
 		local xored = encrypt(match, key)
 		local codes = lzwCompress(xored)
-		local encoded = base36Encode(codes)
+		local encoded = hexEncode(codes)
 		return string.format('decrypt("%s","%s")', encoded, key)
 	end)
 
