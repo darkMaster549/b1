@@ -14,6 +14,7 @@ return function(parsed)
 	local header     = require("Resources.Templates.Header")
 	local vm         = require("Resources.Templates.Vm")
 	local decTpl     = require("Resources.Templates.DecryptStringsTemplate")
+	local memeStr    = require("Resources.MemeStrings")
 
 	local decKey, cShift = tostring(_G.Random(100,400)), tostring(_G.Random(3,10))
 	print("CONSTANT SHIFT AMOUNT:", cShift)
@@ -117,9 +118,20 @@ return function(parsed)
 
 	local function readInsts(curInsts, _, extra)
 		local opcodeMap, out, isFirst = {}, "", true
+
 		for i, inst in ipairs(curInsts) do
 			if inst.OpcodeName~="PSEUDO" and inst.Opcode~=-1 then
 				local gen = genOpcode(inst, i, curInsts)
+
+				if math.random(1, 8) == 1 then
+					local meme = memeStr()
+					if settings.ControlFlowFlattening then
+						gen = meme .. "\n" .. gen
+					else
+						out = out .. meme .. "\n"
+					end
+				end
+
 				if settings.ControlFlowFlattening then
 					opcodeMap[i] = gen
 				else
@@ -131,6 +143,7 @@ return function(parsed)
 				isFirst = false
 			end
 		end
+
 		if settings.ControlFlowFlattening then
 			_G.display("--> Generating Control Flow Flattening"..(extra and " ("..extra..")" or ""),"yellow")
 			return CFF:generateState(opcodeMap)
