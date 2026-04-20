@@ -66,22 +66,71 @@ return function(parsed)
 	end
 	_G.getMappedConstant, _G.shiftAmount = getMappedIdx, shiftAmt
 
+	local function randomJunkString()
+		local len = math.random(4, 16)
+		local chars = {}
+		for i = 1, len do
+			chars[i] = string.char(math.random(65, 122))
+		end
+		return table.concat(chars)
+	end
+
+	local function randomJunkNumber()
+		return tostring(math.random(1000, 999999))
+	end
+
 	local function getConsts(tc)
+		local mixed = {}
+
+		-- real constants first, order must not change
+		for i = 1, #tc do
+			table.insert(mixed, tc[i])
+		end
+
+		-- junk constants only at the end
+		local extraJunk = math.random(2, 5)
+		for i = 1, extraJunk do
+			local junkType = math.random(1, 2)
+			local junk
+			if junkType == 1 then
+				junk = { Type = "string", Value = randomJunkString() }
+			else
+				junk = { Type = "number", Value = randomJunkNumber() }
+			end
+			table.insert(mixed, junk)
+		end
+
 		local encs = {}
 		local keys = {}
-		for i = 1, #tc do
-			local c = tc[i]
+		local shifts = {}
+
+		for i = 1, #mixed do
+			local c = mixed[i]
+			local perShift = (tonumber(cShift) + i * 3) % 20 + 1
+			table.insert(shifts, tostring(perShift))
+
 			local raw = type(c) == "table" and tostring(c.Value) or tostring(c)
-			local byted = raw:gsub(".", function(b) return string.char(b:byte() - cShift) end)
+			local byted = raw:gsub(".", function(b)
+				local v = b:byte() - perShift
+				if v < 0 then v = v + 256 end
+				return string.char(v)
+			end)
+
 			if c.Type == "number"  then byted = byted .. string.char(11) end
 			if c.Type == "boolean" then byted = byted .. string.char(7)  end
 			if c.Type == "nil"     then byted = byted .. string.char(6)  end
+
 			local key = tostring(math.random(100, 3000))
 			local enc = encFn(byted, key)
 			table.insert(encs, enc)
 			table.insert(keys, key)
 		end
-		return '"HEBREW!' .. table.concat(encs, "R") .. "R" .. table.concat(keys, "R") .. '"'
+
+		return '"HEBREW!'
+			.. table.concat(encs, "R")
+			.. "R" .. table.concat(keys, "R")
+			.. "R" .. table.concat(shifts, "R")
+			.. '"'
 	end
 
 	local function genOpcode(inst, idx, all)
