@@ -1,6 +1,6 @@
 -- i rebuilt this again --
 -- i won't encrpt the header for now --
--- This Can still Obfuscte like Lauu Big Scripts due to constant Bug/LuaSrcdiet renaming --
+-- This Can now Obfuscte like Lauu Big Scripts --
 math.randomseed(os.time())
 package.path = package.path .. ";./Vm/?.lua"
 
@@ -56,38 +56,20 @@ return function(parsed)
 
 	local replace = function(s,k,w) return s:gsub(":"..k:upper()..":",w) end
 
-	local function shuffleConsts(tc)
-		local total = #tc
-		local pos = {}
-		for i = 1, total do pos[i] = i end
-		for i = total, 2, -1 do
-			local j = math.random(1, i)
-			pos[i], pos[j] = pos[j], pos[i]
-		end
-		local shuffled, indexMap = {}, {}
-		for i = 1, total do
-			shuffled[pos[i]] = tc[i]
-			indexMap[i] = pos[i]
-		end
-		return shuffled, indexMap
-	end
+	local protoOffsets = {}
 
-	_G.constantMaps, _G.currentMapId = {}, "base"
-
-	local function prepareMap(tc, id)
-		local s, m = shuffleConsts(tc)
-		_G.constantMaps[id or "base"] = { shuffled=s, indexMap=m }
-		return s, m
-	end
-
-	local function getConsts(tc, id)
+	local function getMappedIdx(orig, id)
 		id = id or _G.currentMapId or "base"
-		local map = _G.constantMaps[id]
-		local shuffled = map and map.shuffled or shuffleConsts(tc)
+		local offset = protoOffsets[id] or 0
+		return orig + offset + 1
+	end
+	_G.getMappedConstant, _G.shiftAmount = getMappedIdx, shiftAmt
+
+	local function getConsts(tc)
 		local encs = {}
 		local keys = {}
-		for i = 1, #shuffled do
-			local c = shuffled[i]
+		for i = 1, #tc do
+			local c = tc[i]
 			local raw = type(c) == "table" and tostring(c.Value) or tostring(c)
 			local byted = raw:gsub(".", function(b) return string.char(b:byte() - cShift) end)
 			if c.Type == "number"  then byted = byted .. string.char(11) end
@@ -98,19 +80,8 @@ return function(parsed)
 			table.insert(encs, enc)
 			table.insert(keys, key)
 		end
-		-- one string: enc1 R enc2 R enc3 R key1 R key2 R key3
 		return '"' .. table.concat(encs, "R") .. "R" .. table.concat(keys, "R") .. '"'
 	end
-
-	local protoOffsets = {}
-
-	local function getMappedIdx(orig, id)
-		id = id or _G.currentMapId or "base"
-		local offset = protoOffsets[id] or 0
-		local m = _G.constantMaps["base"]
-		return m and m.indexMap and m.indexMap[orig + offset + 1] or orig + offset + 1
-	end
-	_G.getMappedConstant, _G.shiftAmount = getMappedIdx, shiftAmt
 
 	local function genOpcode(inst, idx, all)
 		if inst.OpcodeName=="PSEUDO" or inst.Opcode==-1 then return "-- [PSEUDO] Handled by CLOSURE" end
@@ -184,8 +155,7 @@ return function(parsed)
 					table.insert(consts, c)
 				end
 
-				prepareMap(consts, "base")
-				_G.currentMapId = "base"
+				_G.currentMapId = protoMapId
 
 				local ni = readInsts(require("Vm.Resources.ModifyInstructions")(p.Instructions, p.Constants, p.Prototypes), nil, "PROTOTYPE "..protoAt)
 
@@ -206,8 +176,8 @@ return function(parsed)
 	end
 
 	_G.currentMapId = "base"
-	prepareMap(consts,"base")
-	tree = tree..readInsts(insts,consts)
+	protoOffsets["base"] = 0
+	tree = tree..readInsts(insts, consts)
 	processProtos()
 
 	header = header:gsub("CONSTANTS_HERE_BASEVM", "")
@@ -216,10 +186,11 @@ return function(parsed)
 	tree = tree:gsub(":CONSTANT_SHIFTER:", tostring(cShift))
 
 	return ([[%s
+local __cShift = %s
 local function __vm(Env, __d, __constFn)
 local decrypt = __d
 local __constants = __constFn()
 %s
 end
-__vm((_ENV or getfenv()), __decrypt_fn, function() return __unpack_consts(%s) end)]]):format(decTpl, tree, getConsts(consts, "base"))
+__vm((_ENV or getfenv()), __decrypt_fn, function() return __unpack_consts(%s, __cShift) end)]]):format(decTpl, cShift, tree, getConsts(consts))
 end
