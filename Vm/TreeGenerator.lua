@@ -81,7 +81,7 @@ return function(parsed)
 			table.insert(encs, enc)
 			table.insert(keys, key)
 		end
-		return '"' .. table.concat(encs, "R") .. "R" .. table.concat(keys, "R") .. '"'
+		return '"HEBREW!' .. table.concat(encs, "R") .. "R" .. table.concat(keys, "R") .. '"'
 	end
 
 	local function genOpcode(inst, idx, all)
