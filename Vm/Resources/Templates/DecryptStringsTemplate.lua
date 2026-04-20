@@ -42,19 +42,31 @@ local decrypt = __decrypt_fn
 
 local function __unpack_consts(blob, cShift)
 	blob = blob:gsub("^HEBREW!", "")
+
 	local segs = {}
 	for s in blob:gmatch("[^R]+") do table.insert(segs, s) end
-	local total = #segs / 2
+	local total = #segs / 3
+
+	local encs   = {}
+	local keys   = {}
+	local shifts = {}
+	for i = 1, total do
+		encs[i]   = segs[i]
+		keys[i]   = segs[i + total]
+		shifts[i] = tonumber(segs[i + total * 2])
+	end
+
 	local out = {}
 	for i = 1, total do
-		local dec = __decrypt_fn(segs[i], segs[i + total])
+		local perShift = shifts[i] or cShift
+		local dec = __decrypt_fn(encs[i], keys[i])
 		local len = #dec
 		local lastByte = dec:byte(len)
 		if lastByte == 11 then
 			local raw = dec:sub(1, len - 1)
 			local shifted = {}
 			for j = 1, #raw do
-				shifted[j] = string.char(raw:byte(j) + cShift)
+				shifted[j] = string.char((raw:byte(j) + perShift) % 256)
 			end
 			out[i] = tonumber(table.concat(shifted))
 		elseif lastByte == 7 then
@@ -64,7 +76,7 @@ local function __unpack_consts(blob, cShift)
 		else
 			local shifted = {}
 			for j = 1, len do
-				shifted[j] = string.char(dec:byte(j) + cShift)
+				shifted[j] = string.char((dec:byte(j) + perShift) % 256)
 			end
 			out[i] = table.concat(shifted)
 		end
