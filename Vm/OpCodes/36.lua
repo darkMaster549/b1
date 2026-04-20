@@ -4,33 +4,10 @@ return function(inst,shiftAmount,constant,settings)
 	local prevStack = Stack
 	local prevUpvalues = Upvalues
 	
-	local rawConsts:PROTOHERE: = {CONSTANTS_PROTOTYPE:PROTOHERE:HERE}
-	local C:PROTOHERE: = {}
-	for i, v in pairs(rawConsts:PROTOHERE:) do
-		v = gsub(v, dot, function(bb)
-			if tfind({11,4,7,6},byte(bb)) then
-				return bb 
-			end
-			return char(byte(bb) +:CONSTANT_SHIFTER:) 
-		end)
-		local len = #v
-		local lastByte = byte(v, len)
-		if lastByte == 11 then
-			%s
-		elseif lastByte == 7 then
-			C:PROTOHERE:[i] = byte(v, 1) == 116
-		elseif lastByte == 6 then
-			C:PROTOHERE:[i] = nil
-		else
-			C:PROTOHERE:[i] = v
-		end
-	end
-	rawConsts:PROTOHERE: = nil
-	
 	Stack[:A:] = function(...) -- PROTOTYPE :PROTOHERE:
 		local Varargs, Stack, Temp, Upvalues, pointer, top, Map = {}, {}, {}, {}, 1, 0, :MAPPING:
 		local Args = {...}
-		local C = C:PROTOHERE:
+		local C = __constants
 		
 		-- fix upvalues
 		if next(Map) then
@@ -38,17 +15,15 @@ return function(inst,shiftAmount,constant,settings)
 			    [__index] = function(self, Key)
 			        local map = Map[Key]
 			        if not map then return nil end
-			        
-			        if map[1] == 0 then -- Type 0: Parent Stack
+			        if map[1] == 0 then
 			            return prevStack[map[2]]
-			        else -- Type 1: Parent Upvalue
+			        else
 			            return prevUpvalues[map[2]]
 			        end
 			    end,
 			    [__newindex] = function(self, Key, Value)
 			        local map = Map[Key]
 			        if not map then return end
-			        
 			        if map[1] == 0 then
 			            prevStack[map[2]] = Value
 			        else
@@ -70,20 +45,7 @@ return function(inst,shiftAmount,constant,settings)
 		pointer = pointer+1
 		end
 	end
-]=]):format((not settings.ConstantProtection and [[
-			C:PROTOHERE:[i] = tonumber(sub(v, 1, len - 1))
-		]] or ([[
-			local removedByte = sub(v, 1, len - 1)
-			local decrypted = {}
-			local n = 0
-			for j = 1, #removedByte do
-				n = n + 1
-				decrypted[n] = char(byte(removedByte, j) - %s)
-			end
-			C:PROTOHERE:[i] = tonumber(concat(decrypted))
-		]]):format(tostring(_G.shiftAmount))))
+]=])
 	
 	return output
 end
-
-
