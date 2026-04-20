@@ -40,13 +40,37 @@ local __decrypt_fn = function(d, o)
 end
 local decrypt = __decrypt_fn
 
-local function __unpack_consts(blob)
+local function __unpack_consts(blob, cShift)
 	local segs = {}
 	for s in blob:gmatch("[^R]+") do table.insert(segs, s) end
 	local total = #segs / 2
 	local out = {}
 	for i = 1, total do
-		table.insert(out, __decrypt_fn(segs[i], segs[i + total]))
+		local dec = __decrypt_fn(segs[i], segs[i + total])
+		local len = #dec
+		local lastByte = dec:byte(len)
+		if lastByte == 11 then
+			-- number: strip marker then re-shift
+			local raw = dec:sub(1, len - 1)
+			local shifted = {}
+			for j = 1, #raw do
+				shifted[j] = string.char(raw:byte(j) + cShift)
+			end
+			out[i] = tonumber(table.concat(shifted))
+		elseif lastByte == 7 then
+			-- boolean
+			out[i] = dec:byte(1) == 116
+		elseif lastByte == 6 then
+			-- nil
+			out[i] = nil
+		else
+			-- string: re-apply cShift
+			local shifted = {}
+			for j = 1, len do
+				shifted[j] = string.char(dec:byte(j) + cShift)
+			end
+			out[i] = table.concat(shifted)
+		end
 	end
 	return out
 end
