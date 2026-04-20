@@ -1,5 +1,5 @@
 # B1
-B1 is a Lua 5.1 obfuscator that can only obfuscate Lua 5.1 files. I am unlikely to ever use this for production and is just a project for others and me to learn more about. The obfuscator uses Luac to compile code to bytecode, which the parser reads. It builds a VM using the parser's output and finally minifies the code using [luasrcdiet](https://github.com/jirutka/luasrcdiet).
+B1 is a Lua 5.1 obfuscator that can only obfuscate Lua 5.1 but for now i change some things so it can also obfuscate luau files. I am unlikely to ever use this for production and is just a project for others and me to learn more about. The obfuscator uses Luac to compile code to bytecode, which the parser reads. It builds a VM using the parser's output and finally minifies the code using [luasrcdiet](https://github.com/jirutka/luasrcdiet).
 
 ## Usage
 ```
