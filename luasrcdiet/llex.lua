@@ -66,7 +66,7 @@ end
 local function read_string(del)
   local i = I
   while true do
-    local p, _, r = find(z, "([\n\r\\\"\\'`])", i)
+    local p, _, r = find(z, "([\n\r\\\"\\'])", i)
     if p then
       if r == "\n" or r == "\r" then errorline("unfinished string") end
       i = p
@@ -183,7 +183,7 @@ function M.lex(source, source_name)
       local r = match(z, "^%p", i)
       if r then
         buff = i
-        local p = find("-[\"'.`=<>~", r, 1, true) --luacheck: ignore 421
+        local p = find("-[\"'.=<>~", r, 1, true) --luacheck: ignore 421
         if p then
           if p <= 2 then
             if p == 1 then
