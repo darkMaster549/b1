@@ -38,28 +38,52 @@ local __decrypt_fn = function(d, o)
 	end
 	return table.concat(out)
 end
-local decrypt = __decrypt_fn
+
+-- Derive the XOR key from the raw (pre-XOR) LZW+hex blob and a numeric salt.
+-- Must match deriveKey in EncryptStrings.lua exactly.
+local __deriveKey = function(rawHex, salt)
+	local n = salt
+	for i = 1, #rawHex do
+		n = (n * 31 + rawHex:byte(i)) % 99991
+	end
+	local parts = {}
+	local tmp = n
+	for _ = 1, 6 do
+		parts[#parts+1] = string.char(33 + (tmp % 89))
+		tmp = math.floor(tmp / 89)
+	end
+	return table.concat(parts)
+end
+
+-- decrypt(encoded, rawHex, salt) -- key is never stored, always derived at runtime.
+local decrypt = function(d, rawHex, salt)
+	return __decrypt_fn(d, __deriveKey(rawHex, salt))
+end
 
 local function __unpack_consts(blob, cShift)
 	blob = blob:gsub("^HEBREW!", "")
 
 	local segs = {}
 	for s in blob:gmatch("[^R]+") do table.insert(segs, s) end
-	local total = #segs / 3
+	-- Blob layout: encs R rawHexes R salts R shifts  (4 groups)
+	local total = #segs / 4
 
-	local encs   = {}
-	local keys   = {}
-	local shifts = {}
+	local encs     = {}
+	local rawHexes = {}
+	local salts    = {}
+	local shifts   = {}
 	for i = 1, total do
-		encs[i]   = segs[i]
-		keys[i]   = segs[i + total]
-		shifts[i] = tonumber(segs[i + total * 2])
+		encs[i]     = segs[i]
+		rawHexes[i] = segs[i + total]
+		salts[i]    = tonumber(segs[i + total * 2])
+		shifts[i]   = tonumber(segs[i + total * 3])
 	end
 
 	local out = {}
 	for i = 1, total do
 		local perShift = shifts[i] or cShift
-		local dec = __decrypt_fn(encs[i], keys[i])
+		local key = __deriveKey(rawHexes[i], salts[i])
+		local dec = __decrypt_fn(encs[i], key)
 		local len = #dec
 		local lastByte = dec:byte(len)
 		if lastByte == 11 then
