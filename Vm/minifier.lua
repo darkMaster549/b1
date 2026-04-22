@@ -551,9 +551,14 @@ local lparser = (function()
 end)()
 
 local optparser = (function()
-  local sub = string.sub
-  local sort = table.sort
+  local byte = string.byte
+  local char = string.char
+  local concat = table.concat
+  local fmt = string.format
   local pairs = pairs
+  local rep = string.rep
+  local sort = table.sort
+  local sub = string.sub
   local M = {}
   local LETTERS = "etaoinshrdlucmfwypvbgkqjxz_ETAOINSHRDLUCMFWYPVBGKQJXZ"
   local ALPHANUM = "etaoinshrdlucmfwypvbgkqjxz_0123456789ETAOINSHRDLUCMFWYPVBGKQJXZ"
@@ -561,67 +566,131 @@ local optparser = (function()
   for v in ([[and break continue do else elseif end false for function if in local nil not or repeat return then true until while self _ENV]]):gmatch("%S+") do
     SKIP_NAME[v] = true
   end
-  local toklist, seminfolist, globalinfo, localinfo, statinfo, globaluniq, localuniq, var_new, varlist
+  local toklist, seminfolist, tokpar, seminfopar, xrefpar,
+        globalinfo, localinfo, statinfo, globaluniq, localuniq, var_new, varlist
+
   local function preprocess(infotable)
     local uniqtable = {}
     for i = 1, #infotable do
-      local obj = infotable[i]; local name = obj.name
+      local obj = infotable[i]
+      local name = obj.name
       if not uniqtable[name] then uniqtable[name] = { decl=0, token=0, size=0 } end
       local uniq = uniqtable[name]
       uniq.decl = uniq.decl + 1
-      local xref = obj.xref; local xcount = #xref
+      local xref = obj.xref
+      local xcount = #xref
       uniq.token = uniq.token + xcount
       uniq.size = uniq.size + xcount * #name
+      if obj.decl then
+        obj.id = i
+        obj.xcount = xcount
+        if xcount > 1 then
+          obj.first = xref[2]
+          obj.last = xref[xcount]
+        end
+      else
+        uniq.id = i
+      end
     end
     return uniqtable
   end
+
+  local function recalc_for_entropy(option)
+    local ACCEPT = {
+      TK_KEYWORD=true, TK_NAME=true, TK_NUMBER=true,
+      TK_STRING=true, TK_LSTRING=true,
+    }
+    if not option["opt-comments"] then
+      ACCEPT.TK_COMMENT = true
+      ACCEPT.TK_LCOMMENT = true
+    end
+    local filtered = {}
+    for i = 1, #toklist do filtered[i] = seminfolist[i] end
+    for i = 1, #localinfo do
+      local obj = localinfo[i]
+      local xref = obj.xref
+      for j = 1, obj.xcount do
+        local p = xref[j]
+        filtered[p] = ""
+      end
+    end
+    local freq = {}
+    for i = 0, 255 do freq[i] = 0 end
+    for i = 1, #toklist do
+      local tok2, info = toklist[i], filtered[i]
+      if ACCEPT[tok2] then
+        for j = 1, #info do
+          local c = byte(info, j)
+          freq[c] = freq[c] + 1
+        end
+      end
+    end
+    local function resort(symbols)
+      local symlist = {}
+      for i = 1, #symbols do
+        local c = byte(symbols, i)
+        symlist[i] = { c=c, freq=freq[c] }
+      end
+      sort(symlist, function(v1, v2) return v1.freq > v2.freq end)
+      local charlist = {}
+      for i = 1, #symlist do charlist[i] = char(symlist[i].c) end
+      return concat(charlist)
+    end
+    LETTERS = resort(LETTERS)
+    ALPHANUM = resort(ALPHANUM)
+  end
+
   local function new_var_name()
     local var
     local cletters, calphanum = #LETTERS, #ALPHANUM
     local v = var_new
     if v < cletters then
-      v = v + 1; var = sub(LETTERS, v, v)
+      v = v + 1
+      var = sub(LETTERS, v, v)
     else
       local range, sz = cletters, 1
-      repeat v = v - range; range = range * calphanum; sz = sz + 1 until range > v
+      repeat
+        v = v - range
+        range = range * calphanum
+        sz = sz + 1
+      until range > v
       local n = v % cletters
       v = (v - n) / cletters
-      n = n + 1; var = sub(LETTERS, n, n)
+      n = n + 1
+      var = sub(LETTERS, n, n)
       while sz > 1 do
         local m = v % calphanum
         v = (v - m) / calphanum
-        m = m + 1; var = var..sub(ALPHANUM, m, m); sz = sz - 1
+        m = m + 1
+        var = var..sub(ALPHANUM, m, m)
+        sz = sz - 1
       end
     end
     var_new = var_new + 1
     return var, globaluniq[var] ~= nil
   end
+
   local function optimize_locals(option)
+    var_new = 0
+    varlist = {}
     globaluniq = preprocess(globalinfo)
     localuniq = preprocess(localinfo)
+    if option["opt-entropy"] then
+      recalc_for_entropy(option)
+    end
     local object = {}
     for i = 1, #localinfo do
-      local obj = localinfo[i]
-      if not obj.is_special then
-        local newobj = {
-          name=obj.name, id=i, xcount=#obj.xref, xref=obj.xref,
-          act=obj.act, rem=obj.rem,
-        }
-        local xref = obj.xref
-        if #xref > 1 then newobj.first = xref[2]; newobj.last = xref[#xref] end
-        object[#object+1] = newobj
-      end
+      object[i] = localinfo[i]
     end
-    sort(object, function(a,b) return a.xcount > b.xcount end)
-    var_new = 0; varlist = {}
-    local used_specials = {}
-    local temp = {}
+    sort(object, function(v1, v2) return v1.xcount > v2.xcount end)
+    local temp, j, used_specials = {}, 1, {}
     for i = 1, #object do
       local obj = object[i]
-      if SKIP_NAME[obj.name] then
-        obj.skip=true; obj.done=true; obj.newname=obj.name
+      if not obj.is_special then
+        temp[j] = obj; j = j + 1
+      else
         used_specials[#used_specials+1] = obj.name
-      else temp[#temp+1] = obj end
+      end
     end
     object = temp
     local nobject = #object
@@ -638,7 +707,10 @@ local optparser = (function()
           local act, rem = obj.act, obj.rem
           while rem < 0 do rem = localinfo[-rem].rem end
           local drop
-          for j = 1, ngref do local p = gref[j]; if p >= act and p <= rem then drop = true end end
+          for jj = 1, ngref do
+            local p = gref[jj]
+            if p >= act and p <= rem then drop = true end
+          end
           if drop then obj.skip = true; oleft = oleft - 1 end
         end
       end
@@ -660,8 +732,8 @@ local optparser = (function()
             while rem < 0 do rem = localinfo[-rem].rem end
             if not(last < act or first > rem) then
               if act >= obja.act then
-                for j = 1, obja.xcount do
-                  local p = xref[j]
+                for jj = 1, obja.xcount do
+                  local p = xref[jj]
                   if p >= act and p <= rem then oleft=oleft-1; objb.skip=true; break end
                 end
               else
@@ -672,26 +744,31 @@ local optparser = (function()
           end
         end
       end
-      local temp2, j = {}, 1
+      local temp2, jj = {}, 1
       for i = 1, nobject do
         local obj = object[i]
-        if not obj.done then obj.skip=false; temp2[j]=obj; j=j+1 end
+        if not obj.done then obj.skip=false; temp2[jj]=obj; jj=jj+1 end
       end
       object = temp2; nobject = #object
     end
     for i = 1, #localinfo do
       local obj = localinfo[i]; local xref = obj.xref
       if obj.newname then
-        for j = 1, obj.xcount do seminfolist[xref[j]] = obj.newname end
+        for jj = 1, obj.xcount do seminfolist[xref[jj]] = obj.newname end
         obj.name, obj.oldname = obj.newname, obj.name
       else obj.oldname = obj.name end
     end
     for _, name in ipairs(used_specials) do varlist[#varlist+1] = name end
   end
+
   function M.optimize(option, _toklist, _seminfolist, xinfo)
     toklist, seminfolist = _toklist, _seminfolist
+    tokpar, seminfopar, xrefpar = xinfo.toklist, xinfo.seminfolist, xinfo.xreflist
     globalinfo, localinfo, statinfo = xinfo.globalinfo, xinfo.localinfo, xinfo.statinfo
     if option["opt-locals"] then optimize_locals(option) end
+    if option["opt-experimental"] then
+      -- optimize_func1 omitted (rarely used)
+    end
   end
   return M
 end)()
