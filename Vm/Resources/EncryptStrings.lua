@@ -22,7 +22,6 @@ local function lzwCompress(data)
 	return result
 end
 
--- Hex encode a list of numbers (each number as 4 hex chars)
 local function hexEncode(codes)
 	local parts = {}
 	for _, code in ipairs(codes) do
@@ -31,40 +30,6 @@ local function hexEncode(codes)
 	return table.concat(parts)
 end
 
--- Hex decode back to list of numbers
-local function hexDecode(str)
-	local codes = {}
-	for i = 1, #str, 4 do
-		local chunk = str:sub(i, i+3)
-		table.insert(codes, tonumber(chunk, 16))
-	end
-	return codes
-end
-
--- LZW decompress
-local function lzwDecompress(codes)
-	local dict = {}
-	for i = 0, 255 do dict[i] = string.char(i) end
-	local dictSize = 256
-	local w = string.char(codes[1])
-	local result = {w}
-	for i = 2, #codes do
-		local k = codes[i]
-		local entry
-		if dict[k] then
-			entry = dict[k]
-		elseif k == dictSize then
-			entry = w .. w:sub(1,1)
-		end
-		table.insert(result, entry)
-		dict[dictSize] = w .. entry:sub(1,1)
-		dictSize = dictSize + 1
-		w = entry
-	end
-	return table.concat(result)
-end
-
--- XOR encrypt
 local function encrypt(str, key)
 	local result = {}
 	local keyLen = #key
@@ -76,23 +41,45 @@ local function encrypt(str, key)
 	return table.concat(result)
 end
 
+-- Derive a key from the raw (pre-XOR) LZW+hex blob and a numeric salt.
+-- Must match __deriveKey in DecryptStringsTemplate.lua exactly.
+local function deriveKey(rawHex, salt)
+	local n = salt
+	for i = 1, #rawHex do
+		n = (n * 31 + rawHex:byte(i)) % 99991
+	end
+	local parts = {}
+	local tmp = n
+	for _ = 1, 6 do
+		table.insert(parts, string.char(33 + (tmp % 89)))
+		tmp = math.floor(tmp / 89)
+	end
+	return table.concat(parts)
+end
+
 -- Main function
 return function(scriptSource, wantsFunction)
 	if wantsFunction == true then
-		-- Returns a function: XOR then LZW then Hex
-		return function(str, key)
-			local xored = encrypt(str, key)
-			local codes = lzwCompress(xored)
-			return hexEncode(codes)
+		-- Returns a function(str, salt) -> encoded, rawHex
+		-- rawHex is stored in the blob for runtime key derivation (no key in output).
+		return function(str, salt)
+			local rawHex = hexEncode(lzwCompress(str))
+			local key    = deriveKey(rawHex, salt)
+			local xored  = encrypt(str, key)
+			local encoded = hexEncode(lzwCompress(xored))
+			return encoded, rawHex
 		end
 	end
 
+	-- Per-string encryption for script source literals.
+	-- Output: decrypt("encoded","rawHex",salt)  -- XOR key never written to output
 	local encryptedScript = scriptSource:gsub('"(.-)"', function(match)
-		local key = tostring(math.random(100, 3000))
-		local xored = encrypt(match, key)
-		local codes = lzwCompress(xored)
-		local encoded = hexEncode(codes)
-		return string.format('decrypt("%s","%s")', encoded, key)
+		local salt   = math.random(100, 9999)
+		local rawHex = hexEncode(lzwCompress(match))
+		local key    = deriveKey(rawHex, salt)
+		local xored  = encrypt(match, key)
+		local encoded = hexEncode(lzwCompress(xored))
+		return string.format('decrypt("%s","%s",%d)', encoded, rawHex, salt)
 	end)
 
 	return encryptedScript
