@@ -398,8 +398,8 @@ function Parser:skipTypeAnnotation()
 			end
 		elseif (t.value == "," or t.value == "=" or t.value == ";") and depth == 0 then
 			break
-		elseif t.type == TOKEN_TYPES.IDENTIFIER or t.type == TOKEN_TYPES.KEYWORD or 
-               t.value == "|" or t.value == "&" or t.value == "?" or t.value == "." or 
+		elseif t.type == TOKEN_TYPES.IDENTIFIER or t.type == TOKEN_TYPES.KEYWORD or
+               t.value == "|" or t.value == "&" or t.value == "?" or t.value == "." or
                t.value == ":" or t.value == "[" or t.value == "]" or t.type == TOKEN_TYPES.VARARG or
                t.type == TOKEN_TYPES.NUMBER or t.type == TOKEN_TYPES.STRING then
 			self:advance()
@@ -497,9 +497,7 @@ function Parser:parseInterpolatedString(token)
 			end
 			local braceDepth = 1
 			local exprStart = pos + 1
-
 			pos = pos + 1
-
 			while pos <= #content and braceDepth > 0 do
 				if content:sub(pos, pos) == "{" then
 					braceDepth = braceDepth + 1
@@ -556,12 +554,10 @@ function Parser:collectVariable()
 	while i >= 1 do
 		local val = self.output[i]
 		if val:match("^%s+$") then
-			-- Store whitespace separately, remove from output
 			table.insert(wsTokens, 1, val)
 			self.output[i] = nil
 			i = i - 1
 		elseif val == ")" then
-			-- Clear any pending whitespace since we're continuing
 			wsTokens = {}
 			parenDepth = parenDepth + 1
 			table.insert(varTokens, 1, val)
@@ -575,7 +571,6 @@ function Parser:collectVariable()
 				self.output[i] = nil
 				i = i - 1
 			else
-				-- Put back whitespace that wasn't part of var
 				for _, ws in ipairs(wsTokens) do
 					table.insert(self.output, ws)
 				end
@@ -595,20 +590,17 @@ function Parser:collectVariable()
 				self.output[i] = nil
 				i = i - 1
 			else
-				-- Put back whitespace that wasn't part of var
 				for _, ws in ipairs(wsTokens) do
 					table.insert(self.output, ws)
 				end
 				break
 			end
 		elseif val:match("^[%a_][%w_]*$") or val == "." or val == ":" then
-			-- Only match identifiers (start with letter/underscore, not numbers)
 			wsTokens = {}
 			table.insert(varTokens, 1, val)
 			self.output[i] = nil
 			i = i - 1
 		else
-			-- Put back whitespace that wasn't part of var
 			for _, ws in ipairs(wsTokens) do
 				table.insert(self.output, ws)
 			end
@@ -616,7 +608,6 @@ function Parser:collectVariable()
 		end
 	end
 
-	-- Clean up nil entries from the end of output
 	while #self.output > 0 and self.output[#self.output] == nil do
 		table.remove(self.output)
 	end
@@ -662,7 +653,7 @@ function Parser:parse()
 					self:emitToken(self:advance())
 				end
 
-				while self:current().type == TOKEN_TYPES.IDENTIFIER or 
+				while self:current().type == TOKEN_TYPES.IDENTIFIER or
                       self:current().value == "." or self:current().value == ":" do
 					self:emitToken(self:advance())
 				end
@@ -697,7 +688,7 @@ function Parser:parse()
 				while self:current().type == TOKEN_TYPES.WHITESPACE do
 					self:emitToken(self:advance())
 				end
-                
+
 				if self:current().value == "function" then
 					break
 				end
@@ -725,24 +716,20 @@ function Parser:parse()
 				end
 			elseif t.type == TOKEN_TYPES.COMPOUND_ASSIGN then
 				local op = t.value:sub(1, #t.value - 1)
-				-- Handle //= (floor division)
 				if op == "//" then
-					op = "math.floor(a/b)" -- placeholder, handled specially below
+					op = "math.floor(a/b)"
 				end
 				local varStr = self:collectVariable()
 				if varStr == "" then
-					-- Fallback if we couldn't collect a variable
 					self:emit(t.value)
 					self:advance()
 				else
 					if t.value == "//=" then
-						-- Floor division: x //= y becomes x = math.floor(x / y)
 						self:emit(varStr)
 						self:emit(" = math.floor(")
 						self:emit(varStr)
 						self:emit(" / ")
 						self:advance()
-						-- Collect the right-hand side expression
 						while self:current().type == TOKEN_TYPES.WHITESPACE do
 							self:advance()
 						end
@@ -763,8 +750,8 @@ function Parser:parse()
 								break
 							elseif depth == 0 and (curr.value == ";" or curr.value == ",") then
 								break
-							elseif curr.type == TOKEN_TYPES.KEYWORD and 
-								   (curr.value == "then" or curr.value == "do" or curr.value == "end" or 
+							elseif curr.type == TOKEN_TYPES.KEYWORD and
+								   (curr.value == "then" or curr.value == "do" or curr.value == "end" or
 								    curr.value == "else" or curr.value == "elseif" or curr.value == "local" or
 								    curr.value == "return" or curr.value == "if" or curr.value == "while" or
 								    curr.value == "for" or curr.value == "function" or curr.value == "repeat") then
@@ -803,11 +790,344 @@ function Parser:parse()
 	return table.concat(self.output)
 end
 
+-- Transform `continue` into Lua 5.1 compatible repeat...until true + break.
+-- Strategy: wrap each loop body in `repeat ... until true`, then
+-- replace `continue` with `break` (which breaks the inner repeat,
+-- continuing the outer loop).
+--
+-- Input:
+--   for i, v in ipairs(t) do
+--       if v == "x" then continue end
+--       print(v)
+--   end
+--
+-- Output:
+--   for i, v in ipairs(t) do repeat
+--       if v == "x" then break end
+--       print(v)
+--   until true end
+--
+local function transformContinue(src)
+	-- First pass: tokenize into {kind, value} pairs.
+	-- kind = "kw" | "ws" | "other"
+	local tokens = {}
+	local i = 1
+	local n = #src
+
+	while i <= n do
+		local c = src:sub(i, i)
+
+		-- comments
+		if c == "-" and src:sub(i, i+1) == "--" then
+			local j = i + 2
+			if src:sub(j, j) == "[" then
+				local eqStart = j + 1
+				local eqs = src:match("^=*", eqStart)
+				local eqCount = #eqs
+				local closeStart = eqStart + eqCount
+				if src:sub(closeStart, closeStart) == "[" then
+					local closePattern = "]" .. string.rep("=", eqCount) .. "]"
+					local closePos = src:find(closePattern, closeStart + 1, true)
+					if closePos then
+						table.insert(tokens, {"other", src:sub(i, closePos + #closePattern - 1)})
+						i = closePos + #closePattern
+					else
+						table.insert(tokens, {"other", src:sub(i)})
+						i = n + 1
+					end
+				else
+					local eol = src:find("\n", j) or n
+					table.insert(tokens, {"other", src:sub(i, eol)})
+					i = eol + 1
+				end
+			else
+				local eol = src:find("\n", i+2) or n
+				table.insert(tokens, {"other", src:sub(i, eol)})
+				i = eol + 1
+			end
+
+		-- long strings
+		elseif c == "[" then
+			local eqStart = i + 1
+			local eqs = src:match("^=*", eqStart)
+			local eqCount = #eqs
+			local closeStart = eqStart + eqCount
+			if src:sub(closeStart, closeStart) == "[" then
+				local closePattern = "]" .. string.rep("=", eqCount) .. "]"
+				local closePos = src:find(closePattern, closeStart + 1, true)
+				if closePos then
+					table.insert(tokens, {"other", src:sub(i, closePos + #closePattern - 1)})
+					i = closePos + #closePattern
+				else
+					table.insert(tokens, {"other", c})
+					i = i + 1
+				end
+			else
+				table.insert(tokens, {"other", c})
+				i = i + 1
+			end
+
+		-- short strings
+		elseif c == '"' or c == "'" then
+			local del = c
+			local j = i + 1
+			while j <= n do
+				local ch = src:sub(j, j)
+				if ch == "\\" then j = j + 2
+				elseif ch == del then j = j + 1; break
+				elseif ch == "\n" or ch == "\r" then break
+				else j = j + 1 end
+			end
+			table.insert(tokens, {"other", src:sub(i, j - 1)})
+			i = j
+
+		-- identifiers / keywords
+		elseif c:match("[%a_]") then
+			local word = src:match("^[%a_][%w_]*", i)
+			local kwset = {
+				["and"]=true, ["break"]=true, ["continue"]=true, ["do"]=true,
+				["else"]=true, ["elseif"]=true, ["end"]=true, ["false"]=true,
+				["for"]=true, ["function"]=true, ["goto"]=true, ["if"]=true,
+				["in"]=true, ["local"]=true, ["nil"]=true, ["not"]=true,
+				["or"]=true, ["repeat"]=true, ["return"]=true, ["then"]=true,
+				["true"]=true, ["until"]=true, ["while"]=true,
+			}
+			if kwset[word] then
+				table.insert(tokens, {"kw", word})
+			else
+				table.insert(tokens, {"name", word})
+			end
+			i = i + #word
+
+		-- numbers
+		elseif c:match("%d") or (c == "." and src:sub(i+1,i+1):match("%d")) then
+			local num = src:match("^[%d%.]+[eE]?[%+%-]?[%d_a-fA-FxX]*", i)
+			table.insert(tokens, {"other", num})
+			i = i + #num
+
+		-- whitespace
+		elseif c:match("%s") then
+			local ws = src:match("^%s+", i)
+			table.insert(tokens, {"ws", ws})
+			i = i + #ws
+
+		else
+			table.insert(tokens, {"other", c})
+			i = i + 1
+		end
+	end
+
+	-- Second pass: walk tokens tracking loop nesting.
+	-- When we enter a for/while loop body (after `do`), inject `repeat`.
+	-- When we exit that loop body (at its matching `end`), inject `until true`.
+	-- Replace `continue` with `break` inside loops.
+	-- For `repeat...until` loops, same wrapping but before `until`.
+	--
+	-- Stack entries:
+	--   kind = "for_while" | "repeat_loop" | "func" | "if" | "other"
+	--   needsWrap = true if we injected a repeat inside this loop
+	--   doSeen = true once we've passed the `do` keyword for for/while
+
+	local stack = {}
+	local out = {}
+
+	local function push(kind)
+		table.insert(stack, {kind=kind, needsWrap=false, doSeen=false})
+	end
+
+	local function pop()
+		return table.remove(stack)
+	end
+
+	local function topLoop()
+		for j = #stack, 1, -1 do
+			local e = stack[j]
+			if e.kind == "for_while" or e.kind == "repeat_loop" then
+				return e
+			end
+			if e.kind == "func" then return nil end
+		end
+		return nil
+	end
+
+	-- Check if any loop in scope has a continue (needs wrapping).
+	-- We do a pre-scan to find which loops contain `continue`.
+	-- Simpler: just always wrap loops that contain continue.
+	-- We'll do a quick pre-scan first.
+
+	local loopsWithContinue = {}
+	do
+		local stk = {}
+		local loopId = 0
+		local idStack = {}
+		for _, tok in ipairs(tokens) do
+			if tok[1] == "kw" then
+				local v = tok[2]
+				if v == "for" or v == "while" then
+					loopId = loopId + 1
+					table.insert(stk, {kind="for_while", id=loopId, doSeen=false})
+					table.insert(idStack, loopId)
+				elseif v == "repeat" then
+					loopId = loopId + 1
+					table.insert(stk, {kind="repeat_loop", id=loopId})
+					table.insert(idStack, loopId)
+				elseif v == "function" then
+					table.insert(stk, {kind="func"})
+					table.insert(idStack, 0)
+				elseif v == "do" then
+					local top = stk[#stk]
+					if top and top.kind == "for_while" and not top.doSeen then
+						top.doSeen = true
+					else
+						table.insert(stk, {kind="other"})
+						table.insert(idStack, 0)
+					end
+				elseif v == "if" then
+					table.insert(stk, {kind="if"})
+					table.insert(idStack, 0)
+				elseif v == "end" then
+					table.remove(stk)
+					table.remove(idStack)
+				elseif v == "until" then
+					local top = stk[#stk]
+					if top and top.kind == "repeat_loop" then
+						table.remove(stk)
+						table.remove(idStack)
+					end
+				elseif v == "continue" then
+					-- find innermost loop id
+					for j = #stk, 1, -1 do
+						local e = stk[j]
+						if e.kind == "for_while" or e.kind == "repeat_loop" then
+							loopsWithContinue[e.id] = true
+							break
+						end
+						if e.kind == "func" then break end
+					end
+				end
+			end
+		end
+	end
+
+	-- Now do the actual transform pass.
+	-- For loops that have continue: wrap body in repeat...until true,
+	-- replace continue with break.
+	local stk2 = {}
+	local loopId2 = 0
+
+	local function push2(kind, id)
+		table.insert(stk2, {kind=kind, id=id, doSeen=false, wrapped=false})
+	end
+
+	local function pop2()
+		return table.remove(stk2)
+	end
+
+	local function topLoop2()
+		for j = #stk2, 1, -1 do
+			local e = stk2[j]
+			if e.kind == "for_while" or e.kind == "repeat_loop" then
+				return e
+			end
+			if e.kind == "func" then return nil end
+		end
+		return nil
+	end
+
+	local ti = 1
+	while ti <= #tokens do
+		local tok = tokens[ti]
+		ti = ti + 1
+
+		if tok[1] ~= "kw" then
+			table.insert(out, tok[2])
+		else
+			local v = tok[2]
+
+			if v == "for" or v == "while" then
+				loopId2 = loopId2 + 1
+				push2("for_while", loopId2)
+				table.insert(out, v)
+
+			elseif v == "repeat" then
+				loopId2 = loopId2 + 1
+				local id = loopId2
+				push2("repeat_loop", id)
+				table.insert(out, v)
+				-- if this repeat loop has continue, inject inner repeat after `repeat`
+				if loopsWithContinue[id] then
+					stk2[#stk2].wrapped = true
+					table.insert(out, " repeat")
+				end
+
+			elseif v == "function" then
+				push2("func", 0)
+				table.insert(out, v)
+
+			elseif v == "do" then
+				local top = stk2[#stk2]
+				if top and top.kind == "for_while" and not top.doSeen then
+					top.doSeen = true
+					table.insert(out, v)
+					-- inject `repeat` right after `do` if this loop has continue
+					if loopsWithContinue[top.id] then
+						top.wrapped = true
+						table.insert(out, " repeat")
+					end
+				else
+					push2("other", 0)
+					table.insert(out, v)
+				end
+
+			elseif v == "if" then
+				push2("if", 0)
+				table.insert(out, v)
+
+			elseif v == "end" then
+				local top = pop2()
+				if top and top.kind == "for_while" and top.wrapped then
+					-- close the inner repeat before the loop's end
+					table.insert(out, " until true ")
+				end
+				table.insert(out, v)
+
+			elseif v == "until" then
+				local top = stk2[#stk2]
+				if top and top.kind == "repeat_loop" then
+					if top.wrapped then
+						-- close inner repeat before outer until
+						table.insert(out, " until true ")
+					end
+					pop2()
+				end
+				table.insert(out, v)
+
+			elseif v == "continue" then
+				local loop = topLoop2()
+				if loop and loop.wrapped then
+					-- break out of the inner repeat, continuing the outer loop
+					table.insert(out, "break")
+				else
+					-- loop has no continue (shouldn't reach here) emit as-is
+					table.insert(out, v)
+				end
+
+			else
+				table.insert(out, v)
+			end
+		end
+	end
+
+	return table.concat(out)
+end
+
 function Sanitizer.sanitize(code)
 	local lexer = Lexer.new(code)
 	local tokens = lexer:tokenize()
 	local parser = Parser.new(tokens)
-	return parser:parse()
+	local sanitized = parser:parse()
+	sanitized = transformContinue(sanitized)
+	return sanitized
 end
 
 return Sanitizer
