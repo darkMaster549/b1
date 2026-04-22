@@ -33,9 +33,12 @@ return function(inputFile, outputTo)
         writeFile(inputFile, antitamper .. " \n " .. _G.readFile(inputFile))
     end
 
+    -- Always sanitize Luau syntax (continue, type annotations, compound ops, etc.)
+    _G.display("Sanitizing Luau syntax...", "green")
+    writeFile(inputFile, LuauSanitizer.sanitize(_G.readFile(inputFile)))
+
     if settings.LuaUCompatibility then
         _G.display("LuaU Compatibility mode enabled.", "yellow")
-        writeFile(inputFile, LuauSanitizer.sanitize(_G.readFile(inputFile)))
     end
 
     _G.display("Compiling to bytecode...", "green")
