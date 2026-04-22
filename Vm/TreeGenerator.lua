@@ -100,9 +100,10 @@ return function(parsed)
 			table.insert(mixed, junk)
 		end
 
-		local encs = {}
-		local keys = {}
-		local shifts = {}
+		local encs     = {}
+		local rawHexes = {}
+		local salts    = {}
+		local shifts   = {}
 
 		for i = 1, #mixed do
 			local c = mixed[i]
@@ -120,15 +121,21 @@ return function(parsed)
 			if c.Type == "boolean" then byted = byted .. string.char(7)  end
 			if c.Type == "nil"     then byted = byted .. string.char(6)  end
 
-			local key = tostring(math.random(100, 3000))
-			local enc = encFn(byted, key)
-			table.insert(encs, enc)
-			table.insert(keys, key)
+			-- encFn(str, salt) -> encoded, rawHex
+			-- key is derived at runtime from rawHex+salt, never stored in output
+			local salt = math.random(100, 9999)
+			local enc, rawHex = encFn(byted, salt)
+			table.insert(encs,     enc)
+			table.insert(rawHexes, rawHex)
+			table.insert(salts,    tostring(salt))
 		end
 
+		-- Blob layout: encs R rawHexes R salts R shifts  (4 groups)
+		-- __unpack_consts in DecryptStringsTemplate must match this layout.
 		return '"HEBREW!'
 			.. table.concat(encs, "R")
-			.. "R" .. table.concat(keys, "R")
+			.. "R" .. table.concat(rawHexes, "R")
+			.. "R" .. table.concat(salts, "R")
 			.. "R" .. table.concat(shifts, "R")
 			.. '"'
 	end
