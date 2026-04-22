@@ -2,12 +2,73 @@ math.randomseed(os.time())
 
 local main = {}
 
--- Shuffle
+local function randVar()
+	local pool = {"ll","lI","Il","II","lll","llI","lIl","Ill","lllI","llIl","lIll","Illl"}
+	local base = pool[math.random(1, #pool)]
+	local extra = math.random(2, 4)
+	local chars = {}
+	for i = 1, extra do
+		chars[i] = (math.random(0,1) == 0) and "l" or "I"
+	end
+	return base .. table.concat(chars)
+end
+
+local function runtimeAlwaysTrue(v)
+	local a = math.random(2, 30)
+	local opts = {
+		string.format("(%s * 0) == 0", v),
+		string.format("(%s - %s) == 0", v, v),
+		string.format("%s == %s", v, v),
+		string.format("((%s + %d) - %d) == %s", v, a, a, v),
+	}
+	return opts[math.random(1, #opts)]
+end
+
+local function runtimeAlwaysFalse(v)
+	local opts = {
+		string.format("%s ~= %s", v, v),
+		string.format("(%s * 0) > 1", v),
+		string.format("(%s + 0) < %s", v, v),
+		string.format("(%s - %s) == 1", v, v),
+	}
+	return opts[math.random(1, #opts)]
+end
+
+local function getJunk(v)
+	local lv1, lv2 = randVar(), randVar()
+	local n = math.random(1, 99)
+	local opts = {
+		string.format("if %s then local %s = %s * 0 end", runtimeAlwaysFalse(v), lv1, v),
+		string.format("do local %s = %s - %s local %s = %s + 0 end", lv1, v, v, lv2, lv1),
+		string.format("if %s then local %s = nil end", runtimeAlwaysFalse(v), lv1),
+		string.format("local %s = (%s * 0) + %d", lv1, v, n),
+		string.format("if %s then if %s then local %s = %s end end", runtimeAlwaysFalse(v), runtimeAlwaysFalse(v), lv1, v),
+	}
+	return opts[math.random(1, #opts)]
+end
+
+local function getPointerCheck(target)
+	local style = math.random(1, 4)
+	if style == 1 then
+		local a, b = math.random(1, 50), math.random(2, 20)
+		return string.format("((pointer + %d) * %d) == %d", a, b, (target + a) * b)
+	elseif style == 2 then
+		local a, b = math.random(2, 15), math.random(1, 30)
+		local c = math.random(2, 8)
+		return string.format("((pointer * %d + %d) * %d) == %d", a, b, c, (target * a + b) * c)
+	elseif style == 3 then
+		local pad = math.random(10, 200)
+		return string.format("(pointer + %d) == %d", pad, target + pad)
+	else
+		local a = math.random(1, math.max(1, target - 1))
+		local b = math.random(1, 80)
+		return string.format("(pointer - %d + %d) == %d", a, b, target - a + b)
+	end
+end
+
 local function shuffle(t)
 	local out = {}
-	for i, v in pairs(t) do
-		out[#out+1] = { p = i, c = v }
-	end
+	for i, v in pairs(t) do out[#out+1] = {p=i, c=v} end
 	for i = #out, 2, -1 do
 		local j = math.random(1, i)
 		out[i], out[j] = out[j], out[i]
@@ -15,151 +76,74 @@ local function shuffle(t)
 	return out
 end
 
--- Random identifier that looks like a real variable name
-local function randVar()
-	local prefixes = {"l","ll","lI","Il","II","lll","llI","lIl","Ill"}
-	local p = prefixes[math.random(1, #prefixes)]
-	local len = math.random(3, 7)
-	local chars = {}
-	for i = 1, len do
-		chars[i] = (math.random(0,1) == 0) and "l" or "I"
-	end
-	return p .. table.concat(chars)
-end
-
--- Opaque predicate: always true, but looks complex
--- Returns a condition string that always evaluates to true
-local function alwaysTrue()
-	local a = math.random(2, 15)
-	local b = math.random(1, a - 1)
-	local opts = {
-		-- a^2 - b^2 == (a+b)*(a-b)  -> always true
-		string.format("(%d * %d) == (%d * %d)", a+b, a-b, a*a-b*b, 1),
-		-- n % 2 == n % 2  -> always true
-		string.format("(%d %% 2) == (%d %% 2)", a, a),
-		-- bit trick: n & 0 == 0  -> always true
-		string.format("(%d * 0) == 0", math.random(1, 9999)),
-		-- a + b == b + a  -> always true (commutativity)
-		string.format("(%d + %d) == (%d + %d)", a, b, b, a),
-	}
-	return opts[math.random(1, #opts)]
-end
-
--- Opaque predicate: always false
-local function alwaysFalse()
-	local a = math.random(2, 50)
-	local opts = {
-		-- a^2 < 0  -> always false
-		string.format("(%d * %d) < 0", a, a),
-		-- 0 ~= 0  -> always false
-		string.format("(0) ~= (0)"),
-		-- a > a  -> always false
-		string.format("%d > %d", a, a),
-		-- a + 1 == a  -> always false
-		string.format("(%d + 1) == %d", a, a),
-	}
-	return opts[math.random(1, #opts)]
-end
-
--- Junk that looks plausible but is truly dead
-local function getJunk()
-	local v1, v2 = randVar(), randVar()
-	local n1, n2 = math.random(1, 20), math.random(1, 20)
-	local junkOpts = {
-		-- Dead assignment under always-false guard
-		string.format("if %s then local %s = %d end", alwaysFalse(), v1, math.random(1,999)),
-		-- Nested dead block
-		string.format("do local %s = %d local %s = %s + %d end", v1, n1, v2, v1, n2),
-		-- Tautology check that does nothing
-		string.format("local %s = %s", v1, alwaysTrue() and "true" or "false"),
-		-- Math that goes nowhere
-		string.format("local %s = (%d + %d) * %d", v1, n1, n2, math.random(1,10)),
-		-- Double negation no-op
-		string.format("local %s = not not %s", v1, alwaysTrue()),
-		-- Unreachable nested condition
-		string.format("if %s then if %s then local %s = nil end end", alwaysFalse(), alwaysTrue(), v1),
-	}
-	return junkOpts[math.random(1, #junkOpts)]
-end
-
--- Build a pointer check that hides the real target value using 3-operand math
--- e.g. ((pointer + a) * b) - c == result  where result is precomputed
-local function getPointerCheck(target)
-	local style = math.random(1, 4)
-	if style == 1 then
-		-- ((pointer + a) * b) == result
-		local a = math.random(1, 100)
-		local b = math.random(2, 50)
-		local result = (target + a) * b
-		return string.format("((pointer + %d) * %d) == %d", a, b, result)
-	elseif style == 2 then
-		-- (pointer * a + b) * c == result
-		local a = math.random(2, 20)
-		local b = math.random(1, 50)
-		local c = math.random(2, 10)
-		local result = (target * a + b) * c
-		return string.format("((pointer * %d + %d) * %d) == %d", a, b, c, result)
-	elseif style == 3 then
-		-- pointer + (a * b) == target + (a * b)
-		local a = math.random(2, 30)
-		local b = math.random(2, 30)
-		local pad = a * b
-		return string.format("(pointer + %d) == %d", pad, target + pad)
-	else
-		-- (pointer - a + b) == target - a + b
-		local a = math.random(1, target - 1 > 0 and target - 1 or 1)
-		local b = math.random(1, 100)
-		local result = target - a + b
-		return string.format("(pointer - %d + %d) == %d", a, b, result)
-	end
-end
-
-
-local function wrapOpcode(op)
-	local style = math.random(1, 3)
-	local junk1, junk2 = getJunk(), getJunk()
-
-	if style == 1 then
-		
-		return string.format(
-			"if %s then\n\t\t\t%s\n\t\tend\n\t\tif %s then\n\t\t\tdo\n\t\t\t\t%s\n\t\t\tend\n\t\tend",
-			alwaysFalse(), junk1, alwaysTrue(), op
-		)
-	elseif style == 2 then
-		
-		return string.format(
-			"do\n\t\t\t%s\n\t\tend\n\t\tif %s then\n\t\t\t%s\n\t\tend",
-			op, alwaysFalse(), junk2
-		)
-	else
-		
-		return string.format(
-			"if %s then\n\t\t\tif %s then\n\t\t\t\t%s\n\t\t\telse\n\t\t\t\tdo\n\t\t\t\t\t%s\n\t\t\t\tend\n\t\t\tend\n\t\tend",
-			alwaysTrue(), alwaysFalse(), junk1, op
-		)
-	end
-end
-
 function main:generateState(opcodeMap)
 	local output = {}
+	local isFirst = true
 
-	for i, data in ipairs(shuffle(opcodeMap)) do
+	-- Find max ptr so junk states use out-of-range values
+	local maxPtr = 0
+	for k in pairs(opcodeMap) do
+		if k > maxPtr then maxPtr = k end
+	end
+
+	local function emitJunkState()
+		local fakePtr = maxPtr + math.random(1000, 9999)
+		local check = getPointerCheck(fakePtr)
+		local j1 = getJunk("pointer")
+		local j2 = getJunk("pointer")
+		local line = string.format(
+			"%s %s then\n\t\t\t\tdo\n\t\t\t\t\t%s\n\t\t\t\t\t%s\n\t\t\t\tend",
+			isFirst and "if" or "elseif", check, j1, j2
+		)
+		table.insert(output, line)
+		isFirst = false
+	end
+
+	for idx, data in ipairs(shuffle(opcodeMap)) do
 		local ptr, op = data.p, data.c
 
 		if not op or op == "" or op:match("^%s*$") then
-			op = getJunk()
+			op = getJunk("pointer")
 		end
 
-		local check   = getPointerCheck(ptr)
-		local wrapped = wrapOpcode(op)
+		local check  = getPointerCheck(ptr)
+		local junk1  = getJunk("pointer")
+		local junk2  = getJunk("pointer")
+
+		local wrapStyle = math.random(1, 3)
+		local wrapped
+
+		if wrapStyle == 1 then
+			-- dead branch before real op
+			wrapped = string.format(
+				"if %s then\n\t\t\t\t\t%s\n\t\t\t\tend\n\t\t\t\tdo\n\t\t\t\t\t%s\n\t\t\t\tend",
+				runtimeAlwaysFalse("pointer"), junk1, op
+			)
+		elseif wrapStyle == 2 then
+			-- real op inside always-true, junk inside always-false after
+			wrapped = string.format(
+				"if %s then\n\t\t\t\t\tdo\n\t\t\t\t\t\t%s\n\t\t\t\t\tend\n\t\t\t\tend\n\t\t\t\tif %s then\n\t\t\t\t\t%s\n\t\t\t\tend",
+				runtimeAlwaysTrue("pointer"), op, runtimeAlwaysFalse("pointer"), junk2
+			)
+		else
+			-- nested: always-true -> always-false (junk) else (real op)
+			wrapped = string.format(
+				"if %s then\n\t\t\t\t\tif %s then\n\t\t\t\t\t\t%s\n\t\t\t\t\telse\n\t\t\t\t\t\tdo\n\t\t\t\t\t\t\t%s\n\t\t\t\t\t\tend\n\t\t\t\t\tend\n\t\t\t\tend",
+				runtimeAlwaysTrue("pointer"), runtimeAlwaysFalse("pointer"), junk1, op
+			)
+		end
 
 		local line = string.format(
-			"%s %s then\n\t%s",
-			i == 1 and "if" or "elseif",
-			check,
-			wrapped
+			"%s %s then\n\t\t\t%s",
+			isFirst and "if" or "elseif", check, wrapped
 		)
 		table.insert(output, line)
+		isFirst = false
+
+		-- inject junk state after every 2-3 real states
+		if math.random(1, 3) ~= 1 then
+			emitJunkState()
+		end
 	end
 
 	return table.concat(output, "\n") .. "\nend"
