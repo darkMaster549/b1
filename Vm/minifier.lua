@@ -670,6 +670,14 @@ local optparser = (function()
     return var, globaluniq[var] ~= nil
   end
 
+  local function shuffle_table(t)
+    local n = #t
+    for i = n, 2, -1 do
+      local j = math.random(1, i)
+      t[i], t[j] = t[j], t[i]
+    end
+  end
+
   local function optimize_locals(option)
     var_new = 0
     varlist = {}
@@ -682,7 +690,11 @@ local optparser = (function()
     for i = 1, #localinfo do
       object[i] = localinfo[i]
     end
-    sort(object, function(v1, v2) return v1.xcount > v2.xcount end)
+    if option["opt-shuffle"] then
+      shuffle_table(object)
+    else
+      sort(object, function(v1, v2) return v1.xcount > v2.xcount end)
+    end
     local temp, j, used_specials = {}, 1, {}
     for i = 1, #object do
       local obj = object[i]
@@ -767,7 +779,7 @@ local optparser = (function()
     globalinfo, localinfo, statinfo = xinfo.globalinfo, xinfo.localinfo, xinfo.statinfo
     if option["opt-locals"] then optimize_locals(option) end
     if option["opt-experimental"] then
-      -- optimize_func1 omitted (rarely used)
+      -- optimize_func1 omitted
     end
   end
   return M
@@ -1150,11 +1162,12 @@ local M = {}
 M.NONE_OPTS = {
   binequiv=false, comments=false, emptylines=false, entropy=false,
   eols=false, experimental=false, locals=false, numbers=false,
-  srcequiv=false, strings=false, whitespace=false,
+  srcequiv=false, strings=false, whitespace=false, shuffle=false,
 }
 M.BASIC_OPTS = merge(M.NONE_OPTS, { comments=true, emptylines=true, srcequiv=true, whitespace=true })
 M.DEFAULT_OPTS = merge(M.BASIC_OPTS, { locals=true, numbers=true })
 M.MAXIMUM_OPTS = merge(M.DEFAULT_OPTS, { entropy=true, eols=true, strings=false, srcequiv=false })
+M.SHUFFLE_OPTS = merge(M.DEFAULT_OPTS, { shuffle=true })
 
 local function noop() return end
 local function opts_to_legacy(opts)
