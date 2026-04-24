@@ -37,22 +37,42 @@ return function(inputFile, outputTo)
     _G.display("Sanitizing Luau syntax...", "green")
     writeFile(inputFile, LuauSanitizer.sanitize(_G.readFile(inputFile)))
 
-    if settings.LuaUCompatibility then
-        _G.display("LuaU Compatibility mode enabled.", "yellow")
+    -- Compile to bytecode
+    local bytecode
+
+    if settings.LuauMode then
+        -- Luau mode: try luau compiler
+        _G.display("Compiling with Luau compiler...", "cyan")
+        local luauOk = os.execute("luau-compile --binary " .. inputFile .. " > Input/luac.out 2>nul")
+        if luauOk ~= 0 and luauOk ~= true then
+            -- fallback: try 'luau' directly
+            luauOk = os.execute("luau --compile=binary " .. inputFile .. " > Input/luac.out 2>nul")
+        end
+        if luauOk ~= 0 and luauOk ~= true then
+            _G.display("Luau compiler not found or failed! Falling back to luac5.1...", "yellow")
+            _G.display("(Install luau from https://github.com/luau-lang/luau/releases)", "yellow")
+            settings.LuauMode = false
+            local ok51 = os.execute("luac5.1 -o Input/luac.out " .. inputFile)
+            if ok51 ~= 0 and ok51 ~= true then
+                _G.display("luac5.1 compilation also failed!", "red")
+                restoreInput(inputFile, savedInput)
+                return
+            end
+        end
+    else
+        -- Default: Lua 5.1
+        _G.display("Compiling to Lua 5.1 bytecode...", "green")
+        local ok = os.execute("luac5.1 -o Input/luac.out " .. inputFile)
+        if ok ~= 0 and ok ~= true then
+            _G.display("luac compilation failed!", "red")
+            restoreInput(inputFile, savedInput)
+            return
+        end
     end
 
-    _G.display("Compiling to bytecode...", "green")
-    local ok = os.execute("luac5.1 -o Input/luac.out " .. inputFile)
-
-    if ok ~= 0 and ok ~= true then
-        _G.display("luac compilation failed!", "red")
-        restoreInput(inputFile, savedInput)
-        return
-    end
-
-    local bytecode = _G.readFile("Input/luac.out")
+    bytecode = _G.readFile("Input/luac.out")
     if not bytecode or #bytecode == 0 then
-        _G.display("luac produced no output! Check your input file.", "red")
+        _G.display("Compiler produced no output! Check your input file.", "red")
         restoreInput(inputFile, savedInput)
         return
     end
@@ -63,7 +83,7 @@ return function(inputFile, outputTo)
     _G.display("Generating VM tree...", "green")
     local vmTree = treeGenerator(parsed):gsub(":INSERTENVLOG:", antiEnvLogger)
 
-    if settings.LuaUCompatibility then
+    if settings.LuauMode or settings.LuaUCompatibility then
         _G.display("Applying Roblox compatibility fixes...", "yellow")
         vmTree = vmTree:gsub("os%.time%(%)", "tick and tick() or 0")
         vmTree = vmTree:gsub("_ENV or getfenv%(%)", "_ENV")
