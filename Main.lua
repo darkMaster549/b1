@@ -64,7 +64,7 @@ _G.Random = function(a,b)
 end
 
 -- Lua 5.1 doesn't have table.find, so we implement it here
-_G.table.find =function(t,value)
+_G.table.find = function(t,value)
     for i, v in ipairs(t) do
         if v == value then
             return i
@@ -207,13 +207,16 @@ _G.bit32 = {
 
 -- Check for arguments
 if table.find(args,"--help") then
-    print("Usage: lua Main.lua <input_file>")
+    print("Usage: lua Main.lua <input_file> <output_file> [flags]")
     print("Options:")
     print("  --minify                   minifies the output for smaller output size")
     print("  --constantprotection       encrypts constants for stronger constant security")
     print("  --antitamper               injects anti-tamper checks to detect script modification")
     print("  --controlflowflattening    flattens control flow for simple obfuscation hardening")
+    print("  --encryptstrings           encrypts string constants in output")
+    print("  --luau                     use Luau 80+ opcode set (default: Lua 5.1 38 opcodes)")
     print("  --debug                    enables debugging tools to help diagnose errors")
+    print("  --silent                   suppresses all output messages")
     print("  --help                     shows this message")
     os.exit(0)
 end
@@ -237,13 +240,20 @@ if not outputFile or isFlag(outputFile) then
 end
 
 -- Settings inputs
-settings.ConstantProtection = table.find(args,"--constantprotection") and true or false
-settings.Minify = table.find(args,"--minify") and true or false
-settings.Debug = table.find(args,"--debug") and true or false
-settings.AntiTamper = table.find(args,"--antitamper") and true or false
-settings.EncryptStrings = table.find(args,"--encryptstrings") and true or false
+settings.ConstantProtection    = table.find(args,"--constantprotection") and true or false
+settings.Minify                = table.find(args,"--minify") and true or false
+settings.Debug                 = table.find(args,"--debug") and true or false
+settings.AntiTamper            = table.find(args,"--antitamper") and true or false
+settings.EncryptStrings        = table.find(args,"--encryptstrings") and true or false
 settings.ControlFlowFlattening = table.find(args,"--controlflowflattening") and true or false
-settings.LuaUCompatibility = table.find(args,"--luau") and true or false
+settings.LuaUCompatibility     = table.find(args,"--luau") and true or false
+settings.LuauMode              = table.find(args,"--luau") and true or false
+
+if settings.LuauMode then
+    _G.display("--luau flag detected: using Luau 80+ opcode set", "cyan")
+else
+    _G.display("Default mode: Lua 5.1 (38 opcodes)", "cyan")
+end
 
 -- Run pipeline
 _G.display("Starting obfuscation pipeline...", "green")
