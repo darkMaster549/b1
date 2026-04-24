@@ -49,10 +49,19 @@ return function(parsed)
 		_G.display(dump(label=="CONSTANTS" and consts or label=="INSTRUCTIONS" and insts or protos))
 	end
 
+	-- UPDATED: routes to Luau opcode folder when --luau flag is active
 	local function getOpcode(num, name)
-		local ok, res = pcall(require, "Vm.OpCodes."..num)
-		if ok then return res end
-		_G.display(("--> OP_MISSING: (%s, [%s])"):format(num, name), "red")
+		if settings.LuauMode then
+			local ok, res = pcall(require, "Vm.OpCodes.Luau."..num)
+			if ok then return res end
+			_G.display(("--> LUAU_OP_MISSING: (%s, [%s])"):format(num, name), "yellow")
+			return nil
+		else
+			local ok, res = pcall(require, "Vm.OpCodes."..num)
+			if ok then return res end
+			_G.display(("--> OP_MISSING: (%s, [%s])"):format(num, name), "red")
+			return nil
+		end
 	end
 
 	local replace = function(s,k,w) return s:gsub(":"..k:upper()..":",w) end
@@ -121,8 +130,6 @@ return function(parsed)
 			if c.Type == "boolean" then byted = byted .. string.char(7)  end
 			if c.Type == "nil"     then byted = byted .. string.char(6)  end
 
-			-- encFn(str, salt) -> encoded, rawHex
-			-- key is derived at runtime from rawHex+salt, never stored in output
 			local salt = math.random(100, 9999)
 			local enc, rawHex = encFn(byted, salt)
 			table.insert(encs,     enc)
@@ -130,8 +137,6 @@ return function(parsed)
 			table.insert(salts,    tostring(salt))
 		end
 
-		-- Blob layout: encs R rawHexes R salts R shifts  (4 groups)
-		-- __unpack_consts in DecryptStringsTemplate must match this layout.
 		return '"HEBREW!'
 			.. table.concat(encs, "R")
 			.. "R" .. table.concat(rawHexes, "R")
@@ -156,7 +161,8 @@ return function(parsed)
 
 		local r = replace(replace(replace(fmt,"a",tostring(getReg(inst,"A"))),"c",tostring(getReg(inst,"C"))),"b",tostring(getReg(inst,"B")))
 
-		if inst.OpcodeName=="CLOSURE" then
+		-- handle CLOSURE and NEWCLOSURE (Luau) proto scanning
+		if inst.OpcodeName=="CLOSURE" or inst.OpcodeName=="NEWCLOSURE" or inst.OpcodeName=="DUPCLOSURE" then
 			local parts, li, pc = {}, (idx or 0)+1, 0
 			while all and all[li] and (all[li].OpcodeName=="PSEUDO" or all[li].Opcode==-1) do
 				table.insert(parts,("[%s] = {%s, %s}"):format(pc, getReg(all[li],"C") or 0, getReg(all[li],"B")))
