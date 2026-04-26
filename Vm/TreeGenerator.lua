@@ -187,7 +187,7 @@ return function(parsed)
 			if inst.OpcodeName~="PSEUDO" and inst.Opcode~=-1 then
 				local gen = genOpcode(inst, i, curInsts)
 
-				if math.random(1, 8) == 1 then
+				if math.random(1, 50) == 1 then -- Much Higher num means meme strings will not generates lot of meme strings if lower it generates tons of it.
 					local meme = memeStr()
 					if settings.ControlFlowFlattening or settings.BlockShuffle then
 						gen = meme .. "\n" .. gen
