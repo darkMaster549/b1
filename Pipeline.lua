@@ -3,7 +3,7 @@ local treeGenerator = require("Vm.TreeGenerator")
 local antiEnvLogger = require("Vm.Resources.Templates.EnvLogDetection")
 local antitamper    = require("Vm.Resources.Templates.AntiTamper")
 local LuauSanitizer = require("Vm.LuauSanitizer")
-local minifier      = require("Vm.minifier")
+local minifier      = require("Vm.minifier1")
 local settings      = require("Input.Settings")
 
 local function writeFile(path, content)
@@ -92,13 +92,11 @@ return function(inputFile, outputTo)
 
     if settings.Minify then
         _G.display("Minifying output...", "green")
-        local opts = {}
-        for k, v in pairs(minifier.MAXIMUM_OPTS) do
-            opts[k] = v
-        end
-        opts["opt-strings"] = false
         local ok2, result = pcall(function()
-            return minifier.optimize(opts, vmTree)
+            return minifier.Minify(vmTree, {
+                RenameVariables = true,
+                RenameGlobals   = true,
+            })
         end)
         if ok2 and result and #result > 0 then
             vmTree = result
