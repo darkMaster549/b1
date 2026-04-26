@@ -15,6 +15,7 @@ return function(parsed)
 	local vm         = require("Resources.Templates.Vm")
 	local decTpl     = require("Resources.Templates.DecryptStringsTemplate")
 	local memeStr    = require("Resources.MemeStrings")
+	local numExpr    = settings.NumberToExpressions and require("Resources.NumberExpressions") or nil
 
 	local decKey, cShift = tostring(_G.Random(100,400)), tostring(_G.Random(3,10))
 	print("CONSTANT SHIFT AMOUNT:", cShift)
@@ -208,9 +209,10 @@ return function(parsed)
 
 		if settings.ControlFlowFlattening then
 			_G.display("--> Generating Control Flow Flattening"..(extra and " ("..extra..")" or ""),"yellow")
-			return CFF:generateState(opcodeMap)
+			local result = CFF:generateState(opcodeMap)
+			return numExpr and numExpr(result) or result
 		end
-		return out
+		return numExpr and numExpr(out) or out
 	end
 
 	local function processProtos()
