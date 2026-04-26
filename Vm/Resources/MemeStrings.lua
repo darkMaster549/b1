@@ -29,7 +29,7 @@ local function toEscape(s)
 end
 
 return function(count)
-    count = count or 3
+    count = count or 1
     local out = {}
     for i = 1, count do
         local m = memes[math.random(#memes)]
