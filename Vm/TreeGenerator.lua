@@ -7,15 +7,16 @@ package.path = package.path .. ";./Vm/?.lua"
 return function(parsed)
 	parsed = parsed[2]
 
-	local settings   = require("Input.Settings")
-	local encStr     = require("Resources.EncryptStrings")
-	local encFn      = encStr(nil, true)
-	local CFF        = require("Resources.ControlFlowFlattening")
-	local header     = require("Resources.Templates.Header")
-	local vm         = require("Resources.Templates.Vm")
-	local decTpl     = require("Resources.Templates.DecryptStringsTemplate")
-	local memeStr    = require("Resources.MemeStrings")
-	local numExpr    = settings.NumberToExpressions and require("Resources.NumberExpressions") or nil
+	local settings      = require("Input.Settings")
+	local encStr        = require("Resources.EncryptStrings")
+	local encFn         = encStr(nil, true)
+	local CFF           = require("Resources.ControlFlowFlattening")
+	local header        = require("Resources.Templates.Header")
+	local vm            = require("Resources.Templates.Vm")
+	local decTpl        = require("Resources.Templates.DecryptStringsTemplate")
+	local memeStr       = require("Resources.MemeStrings")
+	local numExpr       = settings.NumberToExpressions and require("Resources.NumberExpressions") or nil
+	local blockShuffle  = settings.BlockShuffle and require("Resources.BlockShuffle") or nil
 
 	local decKey, cShift = tostring(_G.Random(100,400)), tostring(_G.Random(3,10))
 	print("CONSTANT SHIFT AMOUNT:", cShift)
@@ -188,14 +189,16 @@ return function(parsed)
 
 				if math.random(1, 8) == 1 then
 					local meme = memeStr()
-					if settings.ControlFlowFlattening then
+					if settings.ControlFlowFlattening or settings.BlockShuffle then
 						gen = meme .. "\n" .. gen
 					else
 						out = out .. meme .. "\n"
 					end
 				end
 
-				if settings.ControlFlowFlattening then
+				if settings.BlockShuffle then
+					opcodeMap[i] = gen
+				elseif settings.ControlFlowFlattening then
 					opcodeMap[i] = gen
 				else
 					out = out..("%s pointer == %s then -- %s [%s]\n%s\n%s"):format(
@@ -207,11 +210,18 @@ return function(parsed)
 			end
 		end
 
+		if settings.BlockShuffle then
+			_G.display("--> Generating Block Shuffle"..(extra and " ("..extra..")" or ""),"yellow")
+			local result = blockShuffle(opcodeMap, settings.NumberToExpressions)
+			return numExpr and numExpr(result) or result
+		end
+
 		if settings.ControlFlowFlattening then
 			_G.display("--> Generating Control Flow Flattening"..(extra and " ("..extra..")" or ""),"yellow")
 			local result = CFF:generateState(opcodeMap)
 			return numExpr and numExpr(result) or result
 		end
+
 		return numExpr and numExpr(out) or out
 	end
 
