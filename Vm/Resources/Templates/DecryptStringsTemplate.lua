@@ -1,5 +1,5 @@
 return [=[
--- 5-layer LZW+XOR runtime decrypt. Key NEVER stored -- always derived from rawHex+salt.
+-- 1-layer LZW+XOR runtime decrypt.
 
 local __decrypt_fn = function(d, o)
 	local codes = {}
@@ -40,8 +40,6 @@ local __decrypt_fn = function(d, o)
 	return table.concat(out)
 end
 
--- Derive XOR key from rawHex+salt at runtime. Never stored directly.
--- Must match deriveKey in EncryptStrings.lua exactly.
 local __deriveKey = function(rawHex, salt)
 	local n = salt
 	for i = 1, #rawHex do
@@ -56,43 +54,6 @@ local __deriveKey = function(rawHex, salt)
 	return table.concat(parts)
 end
 
--- Peel all 5 layers from a blob serialized as:
---   L1enc|L1raw|L1salt|L2enc|L2raw|L2salt|...|L5enc|L5raw|L5salt
--- L1 = innermost, L5 = outermost. Peel from L5 -> L1.
-local __mlDecrypt_fn = function(blob)
-	local segs = {}
-	for s in blob:gmatch("[^|]+") do
-		table.insert(segs, s)
-	end
-	local LAYERS = 5
-	local layers = {}
-	for l = 1, LAYERS do
-		local b = (l - 1) * 3
-		layers[l] = {
-			enc  = segs[b + 1],
-			raw  = segs[b + 2],
-			salt = tonumber(segs[b + 3]),
-		}
-	end
-	-- Start from outermost encoded, peel inward
-	local current = layers[LAYERS].enc
-	for l = LAYERS, 1, -1 do
-		current = __decrypt_fn(current, __deriveKey(layers[l].raw, layers[l].salt))
-	end
-	return current
-end
-
--- Single-layer decrypt for backward compat (used internally by __unpack_consts fallback)
-local decrypt = function(d, rawHex, salt)
-	return __decrypt_fn(d, __deriveKey(rawHex, salt))
-end
-
--- Exposed for use inside the VM body (string literal decryption)
-local __mlDecrypt = __mlDecrypt_fn
-
--- Unpack constants from the HEBREW! blob.
--- When rawHex contains "|", it's a 5-layer blob -- use __mlDecrypt_fn directly.
--- Otherwise fall back to single-layer.
 local function __unpack_consts(blob, cShift)
 	blob = blob:gsub("^HEBREW!", "")
 
@@ -111,14 +72,7 @@ local function __unpack_consts(blob, cShift)
 	local out = {}
 	for i = 1, total do
 		local perShift = shifts[i] or cShift
-		local dec
-		if rawHexes[i] and rawHexes[i]:find("|") then
-			-- 5-layer path: rawHexes[i] is the full layer blob
-			dec = __mlDecrypt_fn(rawHexes[i])
-		else
-			-- single-layer fallback
-			dec = __decrypt_fn(encs[i], __deriveKey(rawHexes[i], salts[i]))
-		end
+		local dec = __decrypt_fn(encs[i], __deriveKey(rawHexes[i], salts[i]))
 		local len = #dec
 		local lastByte = dec:byte(len)
 		if lastByte == 11 then
