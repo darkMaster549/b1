@@ -18,6 +18,8 @@ local memes = {
     "KING NASiR",
 }
 
+local varNames = {"a","b","c","d","e","f","g","h","k","p","q","r"}
+
 local function toEscape(s)
     local out = {}
     for i = 1, #s do
@@ -31,14 +33,8 @@ return function(count)
     local out = {}
     for i = 1, count do
         local m = memes[math.random(#memes)]
-        local chance = math.random(1, 3)
-
-        if chance == 1 then
-            -- encode as \xx\xx\xx escape sequence
-            out[i] = ('local _m'..i..' = "'..toEscape(m)..'"')
-        else
-            out[i] = ('local _m'..i..' = "'..m..'"')
-        end
+        local vname = varNames[math.random(#varNames)] .. tostring(math.random(100,999))
+        out[i] = ('local '..vname..' = "'..toEscape(m)..'"')
     end
     return table.concat(out, "\n")
 end
