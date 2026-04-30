@@ -1,6 +1,7 @@
 -- i rebuilt this again --
 -- i won't encrpt the header for now --
 -- This Can now Obfuscte like Lauu Big Scripts --
+-- We Use Base91 instead of LZW --
 math.randomseed(os.time())
 package.path = package.path .. ";./Vm/?.lua"
 
@@ -51,7 +52,6 @@ return function(parsed)
 		_G.display(dump(label=="CONSTANTS" and consts or label=="INSTRUCTIONS" and insts or protos))
 	end
 
-	-- UPDATED: routes to Luau opcode folder when --luau flag is active
 	local function getOpcode(num, name)
 		if settings.LuauMode then
 			local ok, res = pcall(require, "Vm.OpCodes.Luau."..num)
@@ -90,15 +90,72 @@ return function(parsed)
 		return tostring(math.random(1000, 999999))
 	end
 
+	local BASE91 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz!#$%&()*+,-./:;<=>?@[]^_`{|}~"
+
+	local function nibbleSwap(b)
+		return ((b % 16) * 16 + math.floor(b / 16)) % 256
+	end
+
+	local function xorBit(a, b)
+		if bit32 then return bit32.bxor(a, b) end
+		if bit then return bit.bxor(a, b) end
+		local r, p = 0, 1
+		while a > 0 or b > 0 do
+			if a % 2 ~= b % 2 then r = r + p end
+			a, b, p = math.floor(a/2), math.floor(b/2), p*2
+		end
+		return r
+	end
+
+	local function base91Encode(input, salt)
+		if not input or #input == 0 then return "~" end
+		local src = {}
+		for i = 1, #input do src[i] = string.byte(input, i) end
+		local transformed = {}
+		for i = 1, #src do
+			local b = (src[i] + (i % 97) + (salt % 13)) % 256
+			b = nibbleSwap(b)
+			local prev = (i > 1) and transformed[i-1] or (0x5A + salt % 7)
+			transformed[i] = xorBit(b, prev % 256)
+		end
+		local out = {}
+		local v, b = 0, 1
+		for i = 1, #transformed do
+			v = v + transformed[i] * b
+			b = b * 256
+			if b > 8191 then
+				local val = v % 8192
+				if val > 88 then
+					out[#out+1] = BASE91:sub((val%91)+1, (val%91)+1)
+					out[#out+1] = BASE91:sub(math.floor(val/91)+1, math.floor(val/91)+1)
+					v = math.floor(v / 8192)
+					b = math.floor(b / 8192)
+				else
+					val = v % 16384
+					out[#out+1] = BASE91:sub((val%91)+1, (val%91)+1)
+					out[#out+1] = BASE91:sub(math.floor(val/91)+1, math.floor(val/91)+1)
+					v = math.floor(v / 16384)
+					b = math.floor(b / 16384)
+				end
+			end
+		end
+		if b > 1 then
+			out[#out+1] = BASE91:sub((v%91)+1, (v%91)+1)
+			if b > 90 or v > 90 then
+				out[#out+1] = BASE91:sub(math.floor(v/91)+1, math.floor(v/91)+1)
+			end
+		end
+		local result = table.concat(out)
+		return (result == "" and "~" or result)
+	end
+
 	local function getConsts(tc)
 		local mixed = {}
 
-		-- real constants first, order must not change
 		for i = 1, #tc do
 			table.insert(mixed, tc[i])
 		end
 
-		-- junk constants only at the end
 		local extraJunk = math.random(2, 5)
 		for i = 1, extraJunk do
 			local junkType = math.random(1, 2)
@@ -111,10 +168,9 @@ return function(parsed)
 			table.insert(mixed, junk)
 		end
 
-		local encs     = {}
-		local rawHexes = {}
-		local salts    = {}
-		local shifts   = {}
+		local encs   = {}
+		local salts  = {}
+		local shifts = {}
 
 		for i = 1, #mixed do
 			local c = mixed[i]
@@ -133,18 +189,20 @@ return function(parsed)
 			if c.Type == "nil"     then byted = byted .. string.char(6)  end
 
 			local salt = math.random(100, 9999)
-			local enc, rawHex = encFn(byted, salt)
-			table.insert(encs,     enc)
-			table.insert(rawHexes, rawHex)
-			table.insert(salts,    tostring(salt))
+			local enc = encFn(byted, salt)
+			enc = enc or "~"
+			table.insert(encs,  enc)
+			table.insert(salts, tostring(salt))
 		end
 
-		return '"HEBREW!'
-			.. table.concat(encs, "R")
-			.. "R" .. table.concat(rawHexes, "R")
-			.. "R" .. table.concat(salts, "R")
-			.. "R" .. table.concat(shifts, "R")
-			.. '"'
+		local total = #encs
+		local raw = tostring(total) .. "\n"
+			.. table.concat(encs,   "\n") .. "\n"
+			.. table.concat(salts,  "\n") .. "\n"
+			.. table.concat(shifts, "\n")
+
+		local blob = base91Encode(raw, 0)
+		return '"HEBREW!' .. blob .. '"'
 	end
 
 	local function genOpcode(inst, idx, all)
@@ -163,7 +221,6 @@ return function(parsed)
 
 		local r = replace(replace(replace(fmt,"a",tostring(getReg(inst,"A"))),"c",tostring(getReg(inst,"C"))),"b",tostring(getReg(inst,"B")))
 
-		-- handle CLOSURE and NEWCLOSURE (Luau) proto scanning
 		if inst.OpcodeName=="CLOSURE" or inst.OpcodeName=="NEWCLOSURE" or inst.OpcodeName=="DUPCLOSURE" then
 			local parts, li, pc = {}, (idx or 0)+1, 0
 			while all and all[li] and (all[li].OpcodeName=="PSEUDO" or all[li].Opcode==-1) do
@@ -187,7 +244,7 @@ return function(parsed)
 			if inst.OpcodeName~="PSEUDO" and inst.Opcode~=-1 then
 				local gen = genOpcode(inst, i, curInsts)
 
-				if math.random(1, 50) == 1 then -- Much Higher num means meme strings will not generates lot of meme strings if lower it generates tons of it.
+				if math.random(1, 50) == 1 then
 					local meme = memeStr()
 					if settings.ControlFlowFlattening or settings.BlockShuffle then
 						gen = meme .. "\n" .. gen
