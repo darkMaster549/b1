@@ -32,6 +32,15 @@ local function base10Encode(input, salt)
     return (result == "" and "~" or result)
 end
 
+_G.__decryptFnName = _G.__decryptFnName or (function()
+    local chars = "abcdefghijklmnopqrstuvwxyz"
+    local t = {"_"}
+    for i = 1, math.random(6,12) do
+        t[#t+1] = chars:sub(math.random(1,#chars), math.random(1,#chars))
+    end
+    return table.concat(t)
+end)()
+
 return function(scriptSource, wantsFunction)
     if wantsFunction == true then
         return function(str, salt)
@@ -40,11 +49,12 @@ return function(scriptSource, wantsFunction)
         end
     end
 
+    local fnName = _G.__decryptFnName
     local encryptedScript = scriptSource:gsub('"(.-)"', function(match)
         local salt = math.random(100, 9999)
         local encoded = base10Encode(match, salt)
         encoded = encoded:gsub("\\", "\\\\"):gsub('"', '\\"')
-        return string.format('__decrypt_fn("%s",%d)', encoded, salt)
+        return string.format('%s("%s",%d)', fnName, encoded, salt)
     end)
 
     return encryptedScript
