@@ -1,316 +1,374 @@
--- i rebuilt this again --
--- i won't encrpt the header for now --
--- This Can now Obfuscte like Lauu Big Scripts --
--- We Use Base10 instead of Base91 --
 math.randomseed(os.time())
 package.path = package.path .. ";./Vm/?.lua"
 
 return function(parsed)
-	parsed = parsed[2]
+    parsed = parsed[2]
 
-	local settings      = require("Input.Settings")
-	local encStr        = require("Resources.EncryptStrings")
-	local encFn         = encStr(nil, true)
-	local CFF           = require("Resources.ControlFlowFlattening")
-	local header        = require("Resources.Templates.Header")
-	local vm            = require("Resources.Templates.Vm")
-	local decTpl        = require("Resources.Templates.DecryptStringsTemplate")
-	local memeStr       = require("Resources.MemeStrings")
-	local numExpr       = settings.NumberToExpressions and require("Resources.NumberExpressions") or nil
-	local blockShuffle  = settings.BlockShuffle and require("Resources.BlockShuffle") or nil
+    local settings     = require("Input.Settings")
+    local encStr       = require("Resources.EncryptStrings")
+    local encFn        = encStr(nil, true)
+    local CFF          = require("Resources.ControlFlowFlattening")
+    local header       = require("Resources.Templates.Header")
+    local vm           = require("Resources.Templates.Vm")
+    local decTpl       = require("Resources.Templates.DecryptStringsTemplate")
+    local memeStr      = require("Resources.MemeStrings")
+    local numExpr      = settings.NumberToExpressions and require("Resources.NumberExpressions") or nil
+    local blockShuffle = settings.BlockShuffle and require("Resources.BlockShuffle") or nil
 
-	local decKey, cShift = tostring(_G.Random(100,400)), tostring(_G.Random(3,10))
-	print("CONSTANT SHIFT AMOUNT:", cShift)
+    local decKey, cShift = tostring(_G.Random(100,400)), tostring(_G.Random(3,10))
+    print("CONSTANT SHIFT AMOUNT:", cShift)
 
-	local protoAt, tree, protosCount, scannedProtos = 0, "", 0, {}
-	local shiftAmt = settings.ConstantProtection and _G.Random(10,20) or 0
+    -- === RANDOM NAME GENERATOR ===
+    local function randomName()
+        local chars = "abcdefghijklmnopqrstuvwxyz"
+        local t = {"_"}
+        for i = 1, math.random(6, 12) do
+            t[#t+1] = chars:sub(math.random(1,#chars), math.random(1,#chars))
+        end
+        return table.concat(t)
+    end
 
-	local function getReg(loc, name, full)
-		name = name:upper()
-		if full then return loc[name] end
-		local t = loc[name] or loc[name.."x"] or loc["s"..name.."x"]
-		return type(t) == "table" and t.i or t
-	end
-	_G.getReg = getReg
+    -- generate stable names used throughout this run
+    local nameDecryptFn  = randomName()
+    local nameUnpackFn   = randomName()
+    local nameB10Decode  = randomName()
+    local nameXorBit     = randomName()
+    local nameNibbleSwap = randomName()
+    local nameVmFn       = randomName()  -- single stable vm function name
+    _G.__decryptFnName   = nameDecryptFn
 
-	local function dump(t, indent)
-		indent = indent or 0
-		local r = "{\n"
-		for k, v in pairs(t) do
-			local ki = string.rep(" ", indent+2)
-			local fv = type(v)=="string" and ("%q"):format(v) or type(v)=="table" and dump(v,indent+1) or tostring(v)
-			r = r..ki.."["..(type(k)=="string" and ("%q"):format(k) or tostring(k)).."] = "..fv..",\n"
-		end
-		return r..string.rep(" ",indent).."}"
-	end
+    -- === RANDOM PREFIX (replaces HEBREW!) ===
+    local prefixes = {"FUCK","SHIT","LOL","BEEM","STOP","VERTEX","SHET","HOLY"}
+    local chosenPrefix = prefixes[math.random(1, #prefixes)] .. "!"
 
-	local consts, protos = parsed.Constants, parsed.Prototypes
-	local insts; insts, consts = require("Vm.Resources.ModifyInstructions")(parsed.Instructions, consts, protos)
+    -- patch decTpl: replace placeholder names with random ones
+    decTpl = decTpl
+        :gsub("__xorBit",            nameXorBit)
+        :gsub("__nibbleSwap",        nameNibbleSwap)
+        :gsub("__b10Decode",         nameB10Decode)
+        :gsub("__DECRYPT_FN_NAME__", nameDecryptFn)
+        :gsub("__UNPACK_FN_NAME__",  nameUnpackFn)
 
-	for _, label in ipairs({"CONSTANTS","INSTRUCTIONS","PROTOTYPES"}) do
-		_G.display("---------------- "..label.." ---------------","yellow")
-		_G.display(dump(label=="CONSTANTS" and consts or label=="INSTRUCTIONS" and insts or protos))
-	end
+    local protoAt, tree, protosCount, scannedProtos = 0, "", 0, {}
+    local shiftAmt = settings.ConstantProtection and _G.Random(10,20) or 0
 
-	local function getOpcode(num, name)
-		if settings.LuauMode then
-			local ok, res = pcall(require, "Vm.OpCodes.Luau."..num)
-			if ok then return res end
-			_G.display(("--> LUAU_OP_MISSING: (%s, [%s])"):format(num, name), "yellow")
-			return nil
-		else
-			local ok, res = pcall(require, "Vm.OpCodes."..num)
-			if ok then return res end
-			_G.display(("--> OP_MISSING: (%s, [%s])"):format(num, name), "red")
-			return nil
-		end
-	end
+    local function getReg(loc, name, full)
+        name = name:upper()
+        if full then return loc[name] end
+        local t = loc[name] or loc[name.."x"] or loc["s"..name.."x"]
+        return type(t) == "table" and t.i or t
+    end
+    _G.getReg = getReg
 
-	local replace = function(s,k,w) return s:gsub(":"..k:upper()..":",w) end
+    local function dump(t, indent)
+        indent = indent or 0
+        local r = "{\n"
+        for k, v in pairs(t) do
+            local ki = string.rep(" ", indent+2)
+            local fv = type(v)=="string" and ("%q"):format(v)
+                or type(v)=="table" and dump(v,indent+1)
+                or tostring(v)
+            r = r..ki.."["..(type(k)=="string" and ("%q"):format(k) or tostring(k)).."] = "..fv..",\n"
+        end
+        return r..string.rep(" ",indent).."}"
+    end
 
-	local protoOffsets = {}
+    local consts, protos = parsed.Constants, parsed.Prototypes
+    local insts; insts, consts = require("Vm.Resources.ModifyInstructions")(parsed.Instructions, consts, protos)
 
-	local function getMappedIdx(orig, id)
-		id = id or _G.currentMapId or "base"
-		local offset = protoOffsets[id] or 0
-		return orig + offset + 1
-	end
-	_G.getMappedConstant, _G.shiftAmount = getMappedIdx, shiftAmt
+    for _, label in ipairs({"CONSTANTS","INSTRUCTIONS","PROTOTYPES"}) do
+        _G.display("---------------- "..label.." ---------------","yellow")
+        _G.display(dump(label=="CONSTANTS" and consts or label=="INSTRUCTIONS" and insts or protos))
+    end
 
-	local function randomJunkString()
-		local len = math.random(4, 16)
-		local chars = {}
-		for i = 1, len do
-			chars[i] = string.char(math.random(65, 122))
-		end
-		return table.concat(chars)
-	end
+    local function getOpcode(num, name)
+        if settings.LuauMode then
+            local ok, res = pcall(require, "Vm.OpCodes.Luau."..num)
+            if ok then return res end
+            _G.display(("--> LUAU_OP_MISSING: (%s, [%s])"):format(num, name), "yellow")
+            return nil
+        else
+            local ok, res = pcall(require, "Vm.OpCodes."..num)
+            if ok then return res end
+            _G.display(("--> OP_MISSING: (%s, [%s])"):format(num, name), "red")
+            return nil
+        end
+    end
 
-	local function randomJunkNumber()
-		return tostring(math.random(1000, 999999))
-	end
+    local replace = function(s,k,w) return s:gsub(":"..k:upper()..":",w) end
 
-	-- base10: digits only, each byte -> 3-digit decimal
-	local function nibbleSwap(b)
-		return ((b % 16) * 16 + math.floor(b / 16)) % 256
-	end
+    local protoOffsets = {}
 
-	local function xorBit(a, b)
-		if bit32 then return bit32.bxor(a, b) end
-		if bit then return bit.bxor(a, b) end
-		local r, p = 0, 1
-		while a > 0 or b > 0 do
-			if a % 2 ~= b % 2 then r = r + p end
-			a, b, p = math.floor(a/2), math.floor(b/2), p*2
-		end
-		return r
-	end
+    local function getMappedIdx(orig, id)
+        id = id or _G.currentMapId or "base"
+        local offset = protoOffsets[id] or 0
+        return orig + offset + 1
+    end
+    _G.getMappedConstant, _G.shiftAmount = getMappedIdx, shiftAmt
 
-	local function base10Encode(input, salt)
-		if not input or #input == 0 then return "~" end
-		local src = {}
-		for i = 1, #input do src[i] = string.byte(input, i) end
-		local transformed = {}
-		for i = 1, #src do
-			local b = (src[i] + (i % 97) + (salt % 13)) % 256
-			b = nibbleSwap(b)
-			local prev = (i > 1) and transformed[i-1] or (0x5A + salt % 7)
-			transformed[i] = xorBit(b, prev % 256)
-		end
-		local out = {}
-		for i = 1, #transformed do
-			out[i] = string.format("%03d", transformed[i])
-		end
-		local result = table.concat(out)
-		return (result == "" and "~" or result)
-	end
+    local function randomJunkString()
+        local len = math.random(4, 16)
+        local chars = {}
+        for i = 1, len do chars[i] = string.char(math.random(65, 122)) end
+        return table.concat(chars)
+    end
 
-	local function getConsts(tc)
-		local mixed = {}
+    local function randomJunkNumber()
+        return tostring(math.random(1000, 999999))
+    end
 
-		for i = 1, #tc do
-			table.insert(mixed, tc[i])
-		end
+    local function nibbleSwap(b)
+        return ((b % 16) * 16 + math.floor(b / 16)) % 256
+    end
 
-		local extraJunk = math.random(2, 5)
-		for i = 1, extraJunk do
-			local junkType = math.random(1, 2)
-			local junk
-			if junkType == 1 then
-				junk = { Type = "string", Value = randomJunkString() }
-			else
-				junk = { Type = "number", Value = randomJunkNumber() }
-			end
-			table.insert(mixed, junk)
-		end
+    local function xorBit(a, b)
+        if bit32 then return bit32.bxor(a, b) end
+        if bit then return bit.bxor(a, b) end
+        local r, p = 0, 1
+        while a > 0 or b > 0 do
+            if a % 2 ~= b % 2 then r = r + p end
+            a, b, p = math.floor(a/2), math.floor(b/2), p*2
+        end
+        return r
+    end
 
-		local encs   = {}
-		local salts  = {}
-		local shifts = {}
+    local function base10Encode(input, salt)
+        if not input or #input == 0 then return "~" end
+        local src = {}
+        for i = 1, #input do src[i] = string.byte(input, i) end
+        local transformed = {}
+        for i = 1, #src do
+            local b = (src[i] + (i % 97) + (salt % 13)) % 256
+            b = nibbleSwap(b)
+            local prev = (i > 1) and transformed[i-1] or (0x5A + salt % 7)
+            transformed[i] = xorBit(b, prev % 256)
+        end
+        local out = {}
+        for i = 1, #transformed do out[i] = string.format("%03d", transformed[i]) end
+        local result = table.concat(out)
+        return (result == "" and "~" or result)
+    end
 
-		for i = 1, #mixed do
-			local c = mixed[i]
-			local perShift = (tonumber(cShift) + i * 3) % 20 + 1
-			table.insert(shifts, tostring(perShift))
+    -- === JUNK DEAD BRANCH (safe: uses impossible pointer values) ===
+    local function junkBranch()
+        local fakePtr = math.random(100000, 999999)
+        local junkVar = randomName()
+        return ("if pointer == %d then local %s = nil end\n"):format(fakePtr, junkVar)
+    end
 
-			local raw = type(c) == "table" and tostring(c.Value) or tostring(c)
-			local byted = raw:gsub(".", function(b)
-				local v = b:byte() - perShift
-				if v < 0 then v = v + 256 end
-				return string.char(v)
-			end)
+    local function getConsts(tc)
+        local mixed = {}
+        for i = 1, #tc do table.insert(mixed, tc[i]) end
 
-			if c.Type == "number"  then byted = byted .. string.char(11) end
-			if c.Type == "boolean" then byted = byted .. string.char(7)  end
-			if c.Type == "nil"     then byted = byted .. string.char(6)  end
+        local extraJunk = math.random(2, 5)
+        for i = 1, extraJunk do
+            local junkType = math.random(1, 2)
+            local junk
+            if junkType == 1 then
+                junk = { Type = "string", Value = randomJunkString() }
+            else
+                junk = { Type = "number", Value = randomJunkNumber() }
+            end
+            table.insert(mixed, junk)
+        end
 
-			local salt = math.random(100, 9999)
-			local enc = encFn(byted, salt)
-			enc = enc or "~"
-			table.insert(encs,  enc)
-			table.insert(salts, tostring(salt))
-		end
+        -- NOTE: we do NOT shuffle mixed here because opcode indices
+        -- reference constants by position — shuffling breaks that mapping.
+        -- Junk constants appended at the end is safe.
 
-		local total = #encs
-		local raw = tostring(total) .. "\n"
-			.. table.concat(encs,   "\n") .. "\n"
-			.. table.concat(salts,  "\n") .. "\n"
-			.. table.concat(shifts, "\n")
+        local encs, salts, shifts = {}, {}, {}
 
-		local blob = base10Encode(raw, 0)
-		return '"HEBREW!' .. blob .. '"'
-	end
+        for i = 1, #mixed do
+            local c = mixed[i]
+            local perShift = (tonumber(cShift) + i * 3) % 20 + 1
+            table.insert(shifts, tostring(perShift))
 
-	local function genOpcode(inst, idx, all)
-		if inst.OpcodeName=="PSEUDO" or inst.Opcode==-1 then return "-- [PSEUDO] Handled by CLOSURE" end
-		local fmt = getOpcode(inst.Opcode, inst.OpcodeName)
-		if type(fmt)=="function" then
-			local c
-			if inst.Opcode==1 then
-				local B, got = getReg(inst,"B"), nil
-				got = consts[B+1]
-				if B and got and got.Type=="number" then c=got end
-			end
-			fmt = fmt(inst, shiftAmt, c, settings)
-		end
-		if fmt==nil then return "-- ERROR GENERATING OPCODE" end
+            local raw = type(c) == "table" and tostring(c.Value) or tostring(c)
+            local byted = raw:gsub(".", function(b)
+                local v = b:byte() - perShift
+                if v < 0 then v = v + 256 end
+                return string.char(v)
+            end)
 
-		local r = replace(replace(replace(fmt,"a",tostring(getReg(inst,"A"))),"c",tostring(getReg(inst,"C"))),"b",tostring(getReg(inst,"B")))
+            if c.Type == "number"  then byted = byted .. string.char(11) end
+            if c.Type == "boolean" then byted = byted .. string.char(7)  end
+            if c.Type == "nil"     then byted = byted .. string.char(6)  end
 
-		if inst.OpcodeName=="CLOSURE" or inst.OpcodeName=="NEWCLOSURE" or inst.OpcodeName=="DUPCLOSURE" then
-			local parts, li, pc = {}, (idx or 0)+1, 0
-			while all and all[li] and (all[li].OpcodeName=="PSEUDO" or all[li].Opcode==-1) do
-				table.insert(parts,("[%s] = {%s, %s}"):format(pc, getReg(all[li],"C") or 0, getReg(all[li],"B")))
-				pc=pc+1; li=li+1
-			end
-			r = replace(r,"MAPPING","{"..table.concat(parts,", ").."}")
-			if not table.find(scannedProtos,inst) then
-				table.insert(scannedProtos,inst)
-				protosCount=protosCount+1
-				r = replace(r,"PROTOHERE",tostring(protosCount))
-			end
-		end
-		return r
-	end
+            local salt = math.random(100, 9999)
+            local enc = encFn(byted, salt)
+            enc = enc or "~"
+            table.insert(encs,  enc)
+            table.insert(salts, tostring(salt))
+        end
 
-	local function readInsts(curInsts, _, extra)
-		local opcodeMap, out, isFirst = {}, "", true
+        local total = #encs
+        local raw = tostring(total) .. "\n"
+            .. table.concat(encs,   "\n") .. "\n"
+            .. table.concat(salts,  "\n") .. "\n"
+            .. table.concat(shifts, "\n")
 
-		for i, inst in ipairs(curInsts) do
-			if inst.OpcodeName~="PSEUDO" and inst.Opcode~=-1 then
-				local gen = genOpcode(inst, i, curInsts)
+        local blob = base10Encode(raw, 0)
+        return '"' .. chosenPrefix .. blob .. '"'
+    end
 
-				if math.random(1, 50) == 1 then
-					local meme = memeStr()
-					if settings.ControlFlowFlattening or settings.BlockShuffle then
-						gen = meme .. "\n" .. gen
-					else
-						out = out .. meme .. "\n"
-					end
-				end
+    local function genOpcode(inst, idx, all)
+        if inst.OpcodeName=="PSEUDO" or inst.Opcode==-1 then
+            return "-- [PSEUDO] Handled by CLOSURE"
+        end
+        local fmt = getOpcode(inst.Opcode, inst.OpcodeName)
+        if type(fmt)=="function" then
+            local c
+            if inst.Opcode==1 then
+                local B, got = getReg(inst,"B"), nil
+                got = consts[B+1]
+                if B and got and got.Type=="number" then c=got end
+            end
+            fmt = fmt(inst, shiftAmt, c, settings)
+        end
+        if fmt==nil then return "-- ERROR GENERATING OPCODE" end
 
-				if settings.BlockShuffle then
-					opcodeMap[i] = gen
-				elseif settings.ControlFlowFlattening then
-					opcodeMap[i] = gen
-				else
-					out = out..("%s pointer == %s then -- %s [%s]\n%s\n%s"):format(
-						isFirst and "if" or "elseif", i,
-						inst.Opcode, inst.OpcodeName or "unknown",
-						gen, i==#curInsts and "end" or "")
-				end
-				isFirst = false
-			end
-		end
+        local r = replace(replace(replace(fmt,
+            "a", tostring(getReg(inst,"A"))),
+            "c", tostring(getReg(inst,"C"))),
+            "b", tostring(getReg(inst,"B")))
 
-		if settings.BlockShuffle then
-			_G.display("--> Generating Block Shuffle"..(extra and " ("..extra..")" or ""),"yellow")
-			local result = blockShuffle(opcodeMap, settings.NumberToExpressions)
-			return numExpr and numExpr(result) or result
-		end
+        if inst.OpcodeName=="CLOSURE" or inst.OpcodeName=="NEWCLOSURE" or inst.OpcodeName=="DUPCLOSURE" then
+            local parts, li, pc = {}, (idx or 0)+1, 0
+            while all and all[li] and (all[li].OpcodeName=="PSEUDO" or all[li].Opcode==-1) do
+                table.insert(parts,("[%s] = {%s, %s}"):format(
+                    pc, getReg(all[li],"C") or 0, getReg(all[li],"B")))
+                pc=pc+1; li=li+1
+            end
+            r = replace(r,"MAPPING","{"..table.concat(parts,", ").."}")
+            if not table.find(scannedProtos,inst) then
+                table.insert(scannedProtos,inst)
+                protosCount=protosCount+1
+                r = replace(r,"PROTOHERE",tostring(protosCount))
+            end
+        end
+        return r
+    end
 
-		if settings.ControlFlowFlattening then
-			_G.display("--> Generating Control Flow Flattening"..(extra and " ("..extra..")" or ""),"yellow")
-			local result = CFF:generateState(opcodeMap)
-			return numExpr and numExpr(result) or result
-		end
+    local function readInsts(curInsts, _, extra)
+        local opcodeMap, out, isFirst = {}, "", true
 
-		return numExpr and numExpr(out) or out
-	end
+        for i, inst in ipairs(curInsts) do
+            if inst.OpcodeName~="PSEUDO" and inst.Opcode~=-1 then
+                local gen = genOpcode(inst, i, curInsts)
 
-	local function processProtos()
-		local cur, nxt = {}, {}
-		for i=1,#protos do cur[#cur+1]={proto=protos[i]} end
-		while #cur>0 do
-			for _, pd in ipairs(cur) do
-				local p, ex = pd.proto, pd.extra
-				protoAt = protoAt+1
-				local name = "PROTOTYPE"..protoAt.."HERE"
-				_G.display("--> Reading prototype: "..protoAt..(ex or ""),"yellow")
+                if math.random(1, 50) == 1 then
+                    local meme = memeStr()
+                    if settings.ControlFlowFlattening or settings.BlockShuffle then
+                        gen = meme .. "\n" .. gen
+                    else
+                        out = out .. meme .. "\n"
+                    end
+                end
 
-				local offset = #consts
-				local protoMapId = "proto_"..protoAt
-				protoOffsets[protoMapId] = offset
-				for _, c in ipairs(p.Constants) do
-					table.insert(consts, c)
-				end
+                -- inject junk dead branches (only in non-CFF/non-shuffle mode)
+                if not (settings.ControlFlowFlattening or settings.BlockShuffle) then
+                    if math.random(1, 4) == 1 then
+                        out = out .. junkBranch()
+                    end
+                end
 
-				_G.currentMapId = protoMapId
+                if settings.BlockShuffle then
+                    opcodeMap[i] = gen
+                elseif settings.ControlFlowFlattening then
+                    opcodeMap[i] = gen
+                else
+                    out = out..("%s pointer == %s then -- %s [%s]\n%s\n%s"):format(
+                        isFirst and "if" or "elseif",
+                        i,   -- keep sequential, shuffling opcodes breaks VM
+                        inst.Opcode, inst.OpcodeName or "unknown",
+                        gen,
+                        i==#curInsts and "end" or "")
+                end
+                isFirst = false
+            end
+        end
 
-				local ni = readInsts(require("Vm.Resources.ModifyInstructions")(p.Instructions, p.Constants, p.Prototypes), nil, "PROTOTYPE "..protoAt)
+        if settings.BlockShuffle then
+            _G.display("--> Generating Block Shuffle"..(extra and " ("..extra..")" or ""),"yellow")
+            local result = blockShuffle(opcodeMap, settings.NumberToExpressions)
+            return numExpr and numExpr(result) or result
+        end
 
-				for pat, val in pairs({
-					["INST_"..name]           = ni,
-					["CONSTANTS_"..name]      = "",
-					["NUMBERPARAMS_"..name]   = tostring(p.NumUpvalues),
-					["UPVALS_"..name]         = p.NumUpvalues,
-					["STACK_LOCATION_"..name] = ex==nil and "prevStack" or "Upvalues",
-				}) do tree = tree:gsub(pat, function() return val end) end
+        if settings.ControlFlowFlattening then
+            _G.display("--> Generating Control Flow Flattening"..(extra and " ("..extra..")" or ""),"yellow")
+            local result = CFF:generateState(opcodeMap)
+            return numExpr and numExpr(result) or result
+        end
 
-				if p.Prototypes and #p.Prototypes>0 then
-					for _, sp in pairs(p.Prototypes) do nxt[#nxt+1]={proto=sp, extra="(SUB)"} end
-				end
-			end
-			cur, nxt = nxt, {}
-		end
-	end
+        return numExpr and numExpr(out) or out
+    end
 
-	_G.currentMapId = "base"
-	protoOffsets["base"] = 0
-	tree = tree..readInsts(insts, consts)
-	processProtos()
+    local function processProtos()
+        local cur, nxt = {}, {}
+        for i=1,#protos do cur[#cur+1]={proto=protos[i]} end
+        while #cur>0 do
+            for _, pd in ipairs(cur) do
+                local p, ex = pd.proto, pd.extra
+                protoAt = protoAt+1
+                local name = "PROTOTYPE"..protoAt.."HERE"
+                _G.display("--> Reading prototype: "..protoAt..(ex or ""),"yellow")
 
-	header = header:gsub("CONSTANTS_HERE_BASEVM", "")
-	tree = vm:format(header, settings.LuaU_Syntax and ":any" or "", tree,
-		settings.LuaU_Syntax and "pointer+=1" or "pointer = pointer + 1")
-	tree = tree:gsub(":CONSTANT_SHIFTER:", tostring(cShift))
+                local offset = #consts
+                local protoMapId = "proto_"..protoAt
+                protoOffsets[protoMapId] = offset
+                for _, c in ipairs(p.Constants) do table.insert(consts, c) end
 
-	return ([[%s
+                _G.currentMapId = protoMapId
+
+                local ni = readInsts(
+                    require("Vm.Resources.ModifyInstructions")(p.Instructions, p.Constants, p.Prototypes),
+                    nil, "PROTOTYPE "..protoAt)
+
+                for pat, val in pairs({
+                    ["INST_"..name]           = ni,
+                    ["CONSTANTS_"..name]      = "",
+                    ["NUMBERPARAMS_"..name]   = tostring(p.NumUpvalues),
+                    ["UPVALS_"..name]         = p.NumUpvalues,
+                    ["STACK_LOCATION_"..name] = ex==nil and "prevStack" or "Upvalues",
+                }) do tree = tree:gsub(pat, function() return val end) end
+
+                if p.Prototypes and #p.Prototypes>0 then
+                    for _, sp in pairs(p.Prototypes) do
+                        nxt[#nxt+1]={proto=sp, extra="(SUB)"}
+                    end
+                end
+            end
+            cur, nxt = nxt, {}
+        end
+    end
+
+    _G.currentMapId = "base"
+    protoOffsets["base"] = 0
+    tree = tree..readInsts(insts, consts)
+    processProtos()
+
+    header = header:gsub("CONSTANTS_HERE_BASEVM", "")
+    tree = vm:format(header,
+        settings.LuaU_Syntax and ":any" or "",
+        tree,
+        settings.LuaU_Syntax and "pointer+=1" or "pointer = pointer + 1")
+    tree = tree:gsub(":CONSTANT_SHIFTER:", tostring(cShift))
+
+    -- use single stable vmFnName for both define and call
+    return ([[%s
 local __cShift = %s
-local function __vm(Env, __d, __constFn)
+local function %s(Env, __d, __constFn)
 local decrypt = __d
 local __constants = __constFn()
 %s
 end
-__vm((_ENV or getfenv()), __decrypt_fn, function() return __unpack_consts(%s, __cShift) end)]]):format(decTpl, cShift, tree, getConsts(consts))
+%s((_ENV or getfenv()), %s, function() return %s(%s, __cShift) end)]]):format(
+        decTpl,
+        cShift,
+        nameVmFn,        -- define vm function
+        tree,
+        nameVmFn,        -- call same vm function
+        nameDecryptFn,
+        nameUnpackFn,
+        getConsts(consts))
 end
