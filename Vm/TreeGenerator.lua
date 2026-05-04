@@ -18,7 +18,6 @@ return function(parsed)
     local decKey, cShift = tostring(_G.Random(100,400)), tostring(_G.Random(3,10))
     print("CONSTANT SHIFT AMOUNT:", cShift)
 
-    -- === RANDOM NAME GENERATOR ===
     local function randomName()
         local chars = "abcdefghijklmnopqrstuvwxyz"
         local t = {"_"}
@@ -28,20 +27,21 @@ return function(parsed)
         return table.concat(t)
     end
 
-    -- generate stable names used throughout this run
     local nameDecryptFn  = randomName()
     local nameUnpackFn   = randomName()
     local nameB10Decode  = randomName()
     local nameXorBit     = randomName()
     local nameNibbleSwap = randomName()
-    local nameVmFn       = randomName()  -- single stable vm function name
+    local nameVmFn       = randomName()
+    local namePointer    = randomName()
+    local nameStack      = randomName()
+    local nameUpvals     = randomName()
+    local namePrevStack  = randomName()
     _G.__decryptFnName   = nameDecryptFn
 
-    -- === RANDOM PREFIX (replaces HEBREW!) ===
-    local prefixes = {"FUCK","SHIT","LOL","BEEM","STOP","VERTEX","SHET","HOLY"}
+    local prefixes = {"LOL","BRODU","GAY","SHET","WOW","FREAK","BRAT","NOOOOOOOOOO"}
     local chosenPrefix = prefixes[math.random(1, #prefixes)] .. "!"
 
-    -- patch decTpl: replace placeholder names with random ones
     decTpl = decTpl
         :gsub("__xorBit",            nameXorBit)
         :gsub("__nibbleSwap",        nameNibbleSwap)
@@ -149,11 +149,10 @@ return function(parsed)
         return (result == "" and "~" or result)
     end
 
-    -- === JUNK DEAD BRANCH (safe: uses impossible pointer values) ===
     local function junkBranch()
         local fakePtr = math.random(100000, 999999)
         local junkVar = randomName()
-        return ("if pointer == %d then local %s = nil end\n"):format(fakePtr, junkVar)
+        return ("if "..namePointer.." == %d then local %s = nil end\n"):format(fakePtr, junkVar)
     end
 
     local function getConsts(tc)
@@ -171,10 +170,6 @@ return function(parsed)
             end
             table.insert(mixed, junk)
         end
-
-        -- NOTE: we do NOT shuffle mixed here because opcode indices
-        -- reference constants by position — shuffling breaks that mapping.
-        -- Junk constants appended at the end is safe.
 
         local encs, salts, shifts = {}, {}, {}
 
@@ -250,7 +245,12 @@ return function(parsed)
     end
 
     local function readInsts(curInsts, _, extra)
-        local opcodeMap, out, isFirst = {}, "", true
+        local opcodeMap = {}
+        local chunkSize = 100
+        local chunks = {}
+        local currentChunk = {}
+        local isFirst = true
+        local branchCount = 0
 
         for i, inst in ipairs(curInsts) do
             if inst.OpcodeName~="PSEUDO" and inst.Opcode~=-1 then
@@ -261,14 +261,13 @@ return function(parsed)
                     if settings.ControlFlowFlattening or settings.BlockShuffle then
                         gen = meme .. "\n" .. gen
                     else
-                        out = out .. meme .. "\n"
+                        table.insert(currentChunk, meme .. "\n")
                     end
                 end
 
-                -- inject junk dead branches (only in non-CFF/non-shuffle mode)
                 if not (settings.ControlFlowFlattening or settings.BlockShuffle) then
                     if math.random(1, 4) == 1 then
-                        out = out .. junkBranch()
+                        table.insert(currentChunk, junkBranch())
                     end
                 end
 
@@ -277,30 +276,68 @@ return function(parsed)
                 elseif settings.ControlFlowFlattening then
                     opcodeMap[i] = gen
                 else
-                    out = out..("%s pointer == %s then -- %s [%s]\n%s\n%s"):format(
+                    local branch = ("%s %s == %s then -- %s [%s]\n%s\n"):format(
                         isFirst and "if" or "elseif",
-                        i,   -- keep sequential, shuffling opcodes breaks VM
+                        namePointer,
+                        i,
                         inst.Opcode, inst.OpcodeName or "unknown",
-                        gen,
-                        i==#curInsts and "end" or "")
+                        gen)
+                    table.insert(currentChunk, branch)
+                    isFirst = false
+                    branchCount = branchCount + 1
+
+                    if branchCount >= chunkSize then
+                        table.insert(currentChunk, "end\n")
+                        table.insert(chunks, table.concat(currentChunk))
+                        currentChunk = {}
+                        isFirst = true
+                        branchCount = 0
+                    end
                 end
-                isFirst = false
+            end
+        end
+
+        if not (settings.BlockShuffle or settings.ControlFlowFlattening) then
+            if #currentChunk > 0 then
+                table.insert(currentChunk, "end\n")
+                table.insert(chunks, table.concat(currentChunk))
             end
         end
 
         if settings.BlockShuffle then
             _G.display("--> Generating Block Shuffle"..(extra and " ("..extra..")" or ""),"yellow")
             local result = blockShuffle(opcodeMap, settings.NumberToExpressions)
+            result = result:gsub("pointer",   namePointer)
+            result = result:gsub("Stack",     nameStack)
+            result = result:gsub("Upvalues",  nameUpvals)
+            result = result:gsub("prevStack", namePrevStack)
             return numExpr and numExpr(result) or result
         end
 
         if settings.ControlFlowFlattening then
             _G.display("--> Generating Control Flow Flattening"..(extra and " ("..extra..")" or ""),"yellow")
             local result = CFF:generateState(opcodeMap)
+            result = result:gsub("pointer",   namePointer)
+            result = result:gsub("Stack",     nameStack)
+            result = result:gsub("Upvalues",  nameUpvals)
+            result = result:gsub("prevStack", namePrevStack)
             return numExpr and numExpr(result) or result
         end
 
-        return numExpr and numExpr(out) or out
+        local fnDefs = {}
+        local calls = {}
+        for _, chunk in ipairs(chunks) do
+            local fnName = randomName()
+            local chunkStr = chunk
+            chunkStr = chunkStr:gsub("Stack",    nameStack)
+            chunkStr = chunkStr:gsub("Upvalues", nameUpvals)
+            chunkStr = chunkStr:gsub("prevStack",namePrevStack)
+            table.insert(fnDefs, ("local function %s()\n%s\nend"):format(fnName, chunkStr))
+            table.insert(calls, fnName .. "()")
+        end
+
+        local result = table.concat(fnDefs, "\n") .. "\n" .. table.concat(calls, "\n")
+        return numExpr and numExpr(result) or result
     end
 
     local function processProtos()
@@ -329,7 +366,7 @@ return function(parsed)
                     ["CONSTANTS_"..name]      = "",
                     ["NUMBERPARAMS_"..name]   = tostring(p.NumUpvalues),
                     ["UPVALS_"..name]         = p.NumUpvalues,
-                    ["STACK_LOCATION_"..name] = ex==nil and "prevStack" or "Upvalues",
+                    ["STACK_LOCATION_"..name] = ex==nil and namePrevStack or nameUpvals,
                 }) do tree = tree:gsub(pat, function() return val end) end
 
                 if p.Prototypes and #p.Prototypes>0 then
@@ -348,27 +385,50 @@ return function(parsed)
     processProtos()
 
     header = header:gsub("CONSTANTS_HERE_BASEVM", "")
-    tree = vm:format(header,
-        settings.LuaU_Syntax and ":any" or "",
+    header = header
+        :gsub("Upvalues",  nameUpvals)
+        :gsub("prevStack", namePrevStack)
+
+    local vmTemplate = [[
+%s
+local %s = 1
+local %s = {}
+local %s = {}
+local %s = %s
+while true do
+%s
+%s = %s + 1
+end
+]]
+    tree = vmTemplate:format(
+        header,
+        namePointer,
+        nameStack,
+        nameUpvals,
+        namePrevStack, nameStack,
         tree,
-        settings.LuaU_Syntax and "pointer+=1" or "pointer = pointer + 1")
+        namePointer, namePointer)
+
     tree = tree:gsub(":CONSTANT_SHIFTER:", tostring(cShift))
 
-    -- use single stable vmFnName for both define and call
-    return ([[%s
+
+return ([[%s
 local __cShift = %s
+local __env = getfenv and getfenv(1) or _ENV
 local function %s(Env, __d, __constFn)
 local decrypt = __d
 local __constants = __constFn()
 %s
 end
-%s((_ENV or getfenv()), %s, function() return %s(%s, __cShift) end)]]):format(
+%s(__env, %s, function() return %s(%s, __cShift) end)]]):format(
         decTpl,
         cShift,
-        nameVmFn,        -- define vm function
+        nameVmFn,
         tree,
-        nameVmFn,        -- call same vm function
+        nameVmFn,
         nameDecryptFn,
         nameUnpackFn,
         getConsts(consts))
+
+    
 end
