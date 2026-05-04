@@ -1,21 +1,11 @@
--- Vm Template
 return [=[
 %s
+local %s = 1
+local %s = {}
+local %s = {}
+local %s = %s
+while true do
 %s
-		-- VM function
-		return (function()
-			local Stack = {}
-			local Temp = {}
-			local Upvalues = {}
-			local pointer = 1
-			local top = 0
-			local Checks = :INSERTENVLOG:
-
-			-- VM STARTS HERE
-			while true do
-				%s
-				%s
-			end
-		end)()
-
+%s = %s + 1
+end
 ]=]
