@@ -16,7 +16,7 @@ return {
 	--
 	-- IronBrew passes
 	["IBPasses"]              = true,   -- master toggle for all IB passes
-	["IBBounce"]              = true,   -- JMP chaining
+	["IBBounce"]              = false,   -- JMP chaining
 	["IBTestFlip"]            = false,   -- flip EQ/LT/LE/TEST A register randomly
 	["IBEqMutate"]            = true,  -- expand EQ -> LT+JMP+LE+JMP+JMP (heavy)
 	["IBTestSpam"]            = false,  -- recursive branch duplication (very heavy)
