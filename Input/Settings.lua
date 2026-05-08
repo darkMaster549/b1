@@ -1,5 +1,5 @@
 -- You cannot directly edit these and you must use flags in Main.lua to change these settings
-
+-- Two of Flaggs Have Bugs and might not work.
 return {
 	["ConstantProtection"]    = false,  -- Encrypts constants for stronger constant security
 	["EncryptStrings"]        = false,  -- Encrypts strings in output for stronger security
@@ -17,8 +17,8 @@ return {
 	-- IronBrew passes
 	["IBPasses"]              = true,   -- master toggle for all IB passes
 	["IBBounce"]              = true,   -- JMP chaining
-	["IBTestFlip"]            = true,   -- flip EQ/LT/LE/TEST A register randomly
-	["IBEqMutate"]            = false,  -- expand EQ -> LT+JMP+LE+JMP+JMP (heavy)
+	["IBTestFlip"]            = false,   -- flip EQ/LT/LE/TEST A register randomly
+	["IBEqMutate"]            = true,  -- expand EQ -> LT+JMP+LE+JMP+JMP (heavy)
 	["IBTestSpam"]            = false,  -- recursive branch duplication (very heavy)
 	["IBTestSpamDepth"]       = 2,      -- recursion depth (IB uses 3, keep at 2 for sanity)
 }
