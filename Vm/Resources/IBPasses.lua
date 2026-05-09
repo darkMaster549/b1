@@ -1,35 +1,81 @@
 -- IBPasses.lua
--- Ported from IronBrew 2 C# to pure Lua
 -- Passes: Bounce, TestFlip, EqMutate, TestSpam
-
+-- Fix by darkMaster549
 local IBPasses = {}
 
 -- ==================== HELPERS ====================
 
--- makeJMP stores _jmpTarget as absolute index.
--- At the end of each pass, fixJmpOffsets() converts all _jmpTarget
--- values into relative sBx offsets that the VM actually reads.
-local function makeJMP(targetIdx)
-	return {
-		Opcode     = 22,
-		OpcodeName = "JMP",
-		A          = 0,
-		sBx        = 0,        -- will be fixed by fixJmpOffsets()
-		_jmpTarget = targetIdx, -- absolute instruction index
-	}
-end
+-- ALL opcodes that store a PC-relative branch offset.
+-- These must all be absorbed into _jmpTarget before any inserts,
+-- so shiftTargets() keeps them correct, then fixed back after.
+local BRANCH_OPS = {
+	-- Lua 5.1
+	JMP      = { field = "sBx" },
+	FORLOOP  = { field = "sBx" },
+	FORPREP  = { field = "sBx" },
+	-- Luau
+	JUMP             = { field = "sBx" },
+	JUMPBACK         = { field = "sBx" },
+	JUMPX            = { field = "sBx" },
+	FORNPREP         = { field = "D" },
+	FORNLOOP         = { field = "D" },
+	FORGPREP         = { field = "D" },
+	FORGLOOP         = { field = "D" },
+	FORGPREP_INEXT   = { field = "D" },
+	FORGLOOP_INEXT   = { field = "D" },
+	FORGPREP_NEXT    = { field = "D" },
+	FORGLOOP_NEXT    = { field = "D" },
+}
 
--- After all insertions are done, walk the list and convert every
--- _jmpTarget (absolute) into the relative sBx the VM expects:
---   sBx = target - currentPos - 1
--- (pointer is incremented BEFORE the JMP sBx is added, so -1)
-local function fixJmpOffsets(insts)
+-- Convert all branch instructions from relative offset to absolute _jmpTarget.
+-- sBx = target - pos - 1  =>  target = pos + 1 + sBx
+local function absorbBranchOps(insts)
 	for i, inst in ipairs(insts) do
-		if inst._jmpTarget then
-			inst.sBx = inst._jmpTarget - i - 1
-			inst._jmpTarget = nil
+		local info = BRANCH_OPS[inst.OpcodeName]
+		if info and inst._jmpTarget == nil then
+			local offset = inst[info.field]
+			if type(offset) == "number" then
+				inst._jmpTarget    = i + 1 + offset
+				inst._branchField  = info.field  -- remember which field to restore
+				inst[info.field]   = nil
+			end
 		end
 	end
+end
+
+-- After ALL inserts are done, convert _jmpTarget back to relative offset.
+local function fixBranchOffsets(insts)
+	for i, inst in ipairs(insts) do
+		if inst._jmpTarget ~= nil then
+			local field = inst._branchField or "sBx"
+			local offset = inst._jmpTarget - i - 1
+			inst[field]        = offset
+			inst.sBx           = offset  -- always keep sBx in sync (getReg reads it)
+			inst._jmpTarget    = nil
+			inst._branchField  = nil
+		end
+	end
+end
+
+-- When an instruction is inserted at insertPos, shift every _jmpTarget
+-- that points at or past that position up by 1.
+local function shiftTargets(insts, insertPos)
+	for _, inst in ipairs(insts) do
+		if inst._jmpTarget ~= nil and inst._jmpTarget >= insertPos then
+			inst._jmpTarget = inst._jmpTarget + 1
+		end
+	end
+end
+
+local function makeJMP(absTarget)
+	return {
+		Opcode        = 22,
+		OpcodeName    = "JMP",
+		A             = 0,
+		sBx           = 0,
+		_jmpTarget    = absTarget,
+		_branchField  = "sBx",
+	}
 end
 
 local function copyInst(inst)
@@ -43,6 +89,8 @@ local function copyInst(inst)
 			t[k] = v
 		end
 	end
+	t._jmpTarget   = nil
+	t._branchField = nil
 	return t
 end
 
@@ -57,177 +105,137 @@ local function isTest(inst)
 end
 
 -- ==================== BOUNCE ====================
--- Every JMP gets redirected through a new intermediate JMP
--- JMP -> target  becomes  JMP -> newJMP -> target
+-- JMP -> target  becomes  JMP -> bounceJMP -> target
 
 function IBPasses.Bounce(insts)
 	local result = {}
-	for i = 1, #insts do
-		result[i] = insts[i]
-	end
+	for i = 1, #insts do result[i] = insts[i] end
 
-	-- First pass: tag existing JMPs with their current absolute target.
-	-- Real JMPs from the parser use sBx (relative). Convert to absolute.
-	for i, inst in ipairs(result) do
-		if inst.OpcodeName == "JMP" and not inst._jmpTarget then
-			local sbx = type(inst.sBx) == "number" and inst.sBx or 0
-			inst._jmpTarget = i + 1 + sbx
-		end
-	end
+	absorbBranchOps(result)
 
-	local extras = {}
+	-- Snapshot JMP positions only (not FORLOOP etc — no bounce needed for those)
+	local jmpPositions = {}
 	for i = 1, #result do
-		local inst = result[i]
-		if inst.OpcodeName == "JMP" and inst._jmpTarget then
-			local bounce = makeJMP(inst._jmpTarget)
-			table.insert(extras, { after = i, bounce = bounce })
-			inst._bounceRef = bounce
-			inst._jmpTarget = nil
+		if result[i].OpcodeName == "JMP"
+		or result[i].OpcodeName == "JUMP"
+		or result[i].OpcodeName == "JUMPBACK"
+		or result[i].OpcodeName == "JUMPX" then
+			table.insert(jmpPositions, i)
 		end
 	end
 
-	-- Insert bounce JMPs back-to-front so earlier indices stay stable
-	for j = #extras, 1, -1 do
-		local e = extras[j]
-		table.insert(result, e.after + 1, e.bounce)
+	-- Back-to-front so inserts don't shift unprocessed positions
+	for j = #jmpPositions, 1, -1 do
+		local i    = jmpPositions[j]
+		local orig = result[i]
+
+		-- Insert bounce at i+1; shift everything >= i+1 first
+		shiftTargets(result, i + 1)
+
+		local bounce = makeJMP(orig._jmpTarget)  -- bounce goes to old target (already shifted)
+		table.insert(result, i + 1, bounce)
+
+		orig._jmpTarget = i + 1  -- original now points to the bounce
 	end
 
-	-- Now find where each bounce ended up and set the original JMP to point to it
-	for i = 1, #result do
-		local inst = result[i]
-		if inst._bounceRef then
-			for j = 1, #result do
-				if result[j] == inst._bounceRef then
-					inst._jmpTarget = j
-					break
-				end
-			end
-			inst._bounceRef = nil
-		end
-	end
-
-	fixJmpOffsets(result)
+	fixBranchOffsets(result)
 	return result
 end
 
 -- ==================== TESTFLIP ====================
--- Randomly flips A on EQ/LT/LE/TEST and inserts a compensating JMP
--- so the branch semantics are preserved.
+-- Flips A on compare/test, inserts compensating JMP to preserve semantics.
 --
--- Original layout:
---   i     compare/test
---   i+1   skip-JMP  (jumps over i+2 if condition NOT met)
---   i+2   fallthrough
---
--- After flip, the sense is inverted, so we insert a new JMP at i+1
--- that jumps to the fallthrough, and shift the old skip-JMP to i+2.
--- New layout:
---   i     compare/test (A flipped)
---   i+1   compJMP  -> fallthrough (now at i+3 after insert)
---   i+2   old skip-JMP (still jumps past one instruction)
---   i+3   fallthrough
+-- Before:                     After:
+--   i     CMP  A=0              i     CMP  A=1        (flipped)
+--   i+1   skip-JMP -> T         i+1   compJMP -> i+3  (new)
+--   i+2   fallthrough           i+2   skip-JMP -> T   (shifted)
+--                               i+3   fallthrough     (shifted)
 
 function IBPasses.TestFlip(insts)
 	local result = {}
 	for i = 1, #insts do result[i] = insts[i] end
 
-	-- Convert existing JMP sBx to absolute _jmpTarget first
-	for i, inst in ipairs(result) do
-		if inst.OpcodeName == "JMP" and not inst._jmpTarget then
-			local sbx = type(inst.sBx) == "number" and inst.sBx or 0
-			inst._jmpTarget = i + 1 + sbx
-		end
-	end
+	absorbBranchOps(result)
 
-	-- Iterate backwards so inserted instructions don't shift
-	-- the indices of instructions we haven't reached yet
 	local i = #result
 	while i >= 1 do
 		local inst = result[i]
-		local flip = math.random(0, 1) == 1
+		if (isCompare(inst) or inst.OpcodeName == "TEST") and math.random(0, 1) == 1 then
 
-		if flip and (isCompare(inst) or inst.OpcodeName == "TEST") then
-			-- Flip A register
-			local oldA = type(inst.A) == "table" and inst.A.i or inst.A
-			local newA = oldA == 0 and 1 or 0
+			-- Flip A
 			if type(inst.A) == "table" then
-				inst.A.i = newA
+				inst.A.i = inst.A.i == 0 and 1 or 0
 			else
-				inst.A = newA
+				inst.A = inst.A == 0 and 1 or 0
 			end
 
-			-- Insert compensating JMP at i+1.
-			-- After this insert the fallthrough instruction moves from i+2 to i+3.
-			-- All _jmpTargets >= i+1 in the list shift up by 1 too -- fix them.
-			for k = 1, #result do
-				local other = result[k]
-				if other._jmpTarget and other._jmpTarget >= i + 1 then
-					other._jmpTarget = other._jmpTarget + 1
-				end
-			end
-
-			local compJMP = makeJMP(i + 3) -- fallthrough is now at i+3
-			table.insert(result, i + 1, compJMP)
+			-- Shift all targets >= i+1, then insert compensating JMP
+			shiftTargets(result, i + 1)
+			-- Fallthrough is now at i+3 (was i+2, shifted to i+3)
+			table.insert(result, i + 1, makeJMP(i + 3))
 		end
-
 		i = i - 1
 	end
 
-	fixJmpOffsets(result)
+	fixBranchOffsets(result)
 	return result
 end
 
 -- ==================== EQMUTATE ====================
--- Replaces EQ with equivalent: LT + JMP + LE + JMP + JMP
+-- EQ A B C + skip-JMP->T  =>  LT A / JMP->fall / LE ~A / JMP->fall / JMP->T
 
 function IBPasses.EqMutate(insts)
 	local result = {}
 	for i = 1, #insts do result[i] = insts[i] end
 
-	-- Convert existing JMP sBx to absolute _jmpTarget first
-	for i, inst in ipairs(result) do
-		if inst.OpcodeName == "JMP" and not inst._jmpTarget then
-			local sbx = type(inst.sBx) == "number" and inst.sBx or 0
-			inst._jmpTarget = i + 1 + sbx
-		end
-	end
+	absorbBranchOps(result)
 
 	local i = 1
 	while i <= #result do
 		local inst = result[i]
 		if inst.OpcodeName == "EQ" then
-			local regA    = type(inst.A) == "table" and inst.A.i or inst.A
-			local skipJMP = result[i + 1]
-			local branchTarget = skipJMP and skipJMP._jmpTarget or (i + 2)
-			-- fallthrough: after removing 2 and inserting 5, net +3
-			local fallthrough = i + 5
+			local regA      = type(inst.A) == "table" and inst.A.i or inst.A
+			local skipJMP   = result[i + 1]
+			local branchTgt = skipJMP and skipJMP._jmpTarget or (i + 2)
 
-			local newLT = copyInst(inst)
-			newLT.Opcode     = 24
-			newLT.OpcodeName = "LT"
-			newLT.A          = type(inst.A) == "table" and { i = regA, k = false } or regA
-
-			local j1 = makeJMP(fallthrough)
-
-			local newLE = copyInst(inst)
-			newLE.Opcode     = 25
-			newLE.OpcodeName = "LE"
-			local flippedA   = regA == 0 and 1 or 0
-			newLE.A          = type(inst.A) == "table" and { i = flippedA, k = false } or flippedA
-
-			local j2 = makeJMP(fallthrough)
-			local j3 = makeJMP(branchTarget)
-
-			table.remove(result, i)     -- remove EQ
+			-- Remove EQ and skip-JMP (2 instructions)
+			table.remove(result, i)
 			if result[i] and result[i].OpcodeName == "JMP" then
-				table.remove(result, i) -- remove skip-JMP
+				table.remove(result, i)
 			end
 
+			-- After removing 2 at position i, targets > i shift down by 2
+			for _, other in ipairs(result) do
+				if other._jmpTarget ~= nil and other._jmpTarget > i then
+					other._jmpTarget = other._jmpTarget - 2
+				end
+			end
+			if branchTgt > i then branchTgt = branchTgt - 2 end
+
+			-- Insert 5 instructions at i; targets >= i shift up by 5
+			for _, other in ipairs(result) do
+				if other._jmpTarget ~= nil and other._jmpTarget >= i then
+					other._jmpTarget = other._jmpTarget + 5
+				end
+			end
+			if branchTgt >= i then branchTgt = branchTgt + 5 end
+
+			local fallTgt = i + 5  -- fallthrough is right after our 5 new instructions
+
+			local newLT = copyInst(inst)
+			newLT.Opcode = 24; newLT.OpcodeName = "LT"
+			newLT.A = type(inst.A) == "table" and {i=regA, k=false} or regA
+
+			local newLE = copyInst(inst)
+			newLE.Opcode = 25; newLE.OpcodeName = "LE"
+			local flipped = regA == 0 and 1 or 0
+			newLE.A = type(inst.A) == "table" and {i=flipped, k=false} or flipped
+
 			table.insert(result, i,     newLT)
-			table.insert(result, i + 1, j1)
+			table.insert(result, i + 1, makeJMP(fallTgt))
 			table.insert(result, i + 2, newLE)
-			table.insert(result, i + 3, j2)
-			table.insert(result, i + 4, j3)
+			table.insert(result, i + 3, makeJMP(fallTgt))
+			table.insert(result, i + 4, makeJMP(branchTgt))
 
 			i = i + 5
 		else
@@ -235,14 +243,24 @@ function IBPasses.EqMutate(insts)
 		end
 	end
 
-	fixJmpOffsets(result)
+	fixBranchOffsets(result)
 	return result
 end
 
 -- ==================== TESTSPAM ====================
--- Duplicates TEST/EQ/LT/LE branches into redundant trees.
--- All JMP targets are tracked as absolute indices and converted
--- to relative sBx only at the very end via fixJmpOffsets().
+-- Duplicates compare/test into redundant branch trees.
+--
+-- For compare at idx, after transformation:
+--   idx     original compare
+--   idx+1   j_start -> copy1        (inserted here, shifts everything above)
+--   idx+2   fallthrough ...
+--   ...
+--   N+2     copy1
+--   N+3     j1_fall -> idx+2
+--   N+4     j1_junk -> junkTarget
+--   N+5     copy2
+--   N+6     j2_junk -> junkTarget
+--   N+7     j2_fall -> idx+2
 
 function IBPasses.TestSpam(insts, depth)
 	depth = depth or 2
@@ -250,13 +268,7 @@ function IBPasses.TestSpam(insts, depth)
 	local result = {}
 	for i = 1, #insts do result[i] = insts[i] end
 
-	-- Convert existing JMP sBx to absolute _jmpTarget first
-	for i, inst in ipairs(result) do
-		if inst.OpcodeName == "JMP" and not inst._jmpTarget then
-			local sbx = type(inst.sBx) == "number" and inst.sBx or 0
-			inst._jmpTarget = i + 1 + sbx
-		end
-	end
+	absorbBranchOps(result)
 
 	for d = 1, depth do
 		local targets = {}
@@ -266,76 +278,39 @@ function IBPasses.TestSpam(insts, depth)
 			end
 		end
 
-		-- Process back-to-front so earlier indices stay stable
 		for j = #targets, 1, -1 do
 			local idx = targets[j]
 			if idx < 2 then goto continue end
 
+			local N    = #result
 			local orig = result[idx]
 			local junkTarget = math.max(1, idx - math.random(1, math.max(1, idx - 1)))
 
-			-- Layout we are building (all indices are AFTER all inserts below):
-			--
-			--  idx       original compare         (unchanged)
-			--  idx+1     j2_start  -> copy1 block (new insert)
-			--  idx+2     original fallthrough      (shifted up by 1)
-			--  ...
-			--  N+1       copy1   (duplicate compare)
-			--  N+2       j1_fall -> idx+2
-			--  N+3       j1_junk -> junkTarget
-			--  N+4       copy2   (duplicate compare)
-			--  N+5       j2_junk -> junkTarget
-			--  N+6       j2_fall -> idx+2
-			--
-			-- where N = #result before any inserts this iteration.
+			-- Step 1: append 6 items at N+1..N+6
+			-- Step 2: insert j_start at idx+1, shifting N+1..N+6 to N+2..N+7
+			-- So: fallthrough = idx+2, copy1 = N+2, copy2 = N+5
 
-			local N = #result
-
-			local copy1  = copyInst(orig)
-			local copy2  = copyInst(orig)
-
-			-- Targets after inserts:
-			--   inserting j2_start at idx+1 shifts everything above by 1
-			--   so fallthrough (was idx+1 before) becomes idx+2
 			local fallthroughAfter = idx + 2
-			local copy1Pos         = N + 2  -- after j2_start insert shifts N+1 -> N+2? No:
-			-- append 6 items first (copy1..j2_fall), then insert j2_start.
-			-- So copy1 lands at N+1, then insert at idx+1 shifts it to N+2.
-			-- Actually: appending puts copy1 at N+1 before the insert.
-			-- After insert at idx+1 (idx+1 <= N), all indices > idx shift by 1.
-			-- N+1 > idx always (idx < N), so copy1 ends at N+2.
+			local copy1Pos         = N + 2
+			-- copy2 is at N+4 before insert, N+5 after (copy1, j1_fall, j1_junk, copy2)
 
-			local j1_fall  = makeJMP(fallthroughAfter)
-			local j1_junk  = makeJMP(junkTarget)        -- junk doesn't shift (it's <= idx)
-			local j2_junk  = makeJMP(junkTarget)
-			local j2_fall  = makeJMP(fallthroughAfter)
-			local j2_start = makeJMP(copy1Pos)          -- -> copy1 after shift
+			-- Step 1: append
+			table.insert(result, copyInst(orig))          -- N+1 -> N+2 after insert
+			table.insert(result, makeJMP(fallthroughAfter)) -- N+2 -> N+3  (j1_fall)
+			table.insert(result, makeJMP(junkTarget))       -- N+3 -> N+4  (j1_junk)
+			table.insert(result, copyInst(orig))            -- N+4 -> N+5  (copy2)
+			table.insert(result, makeJMP(junkTarget))       -- N+5 -> N+6  (j2_junk)
+			table.insert(result, makeJMP(fallthroughAfter)) -- N+6 -> N+7  (j2_fall)
 
-			-- Append copy1 block (positions N+1, N+2, N+3 before insert)
-			table.insert(result, copy1)
-			table.insert(result, j1_fall)
-			table.insert(result, j1_junk)
-
-			-- Append copy2 block (positions N+4, N+5, N+6 before insert)
-			table.insert(result, copy2)
-			table.insert(result, j2_junk)
-			table.insert(result, j2_fall)
-
-			-- Insert redirect at idx+1 — shifts everything above idx by 1
-			-- including the appended blocks (N+1..N+6 become N+2..N+7)
-			table.insert(result, idx + 1, j2_start)
-
-			-- Fix up any _jmpTargets that pointed above idx (they all shifted +1)
-			-- j2_start itself already has the correct post-shift target (copy1Pos = N+2)
-			-- j1_fall and j2_fall both pointed to fallthroughAfter = idx+2, which
-			-- is also already the correct post-shift index.
-			-- junkTarget <= idx so it did NOT shift — j1_junk and j2_junk are fine.
+			-- Step 2: shift all targets >= idx+1, then insert j_start
+			shiftTargets(result, idx + 1)
+			table.insert(result, idx + 1, makeJMP(copy1Pos))
 
 			::continue::
 		end
 	end
 
-	fixJmpOffsets(result)
+	fixBranchOffsets(result)
 	return result
 end
 
