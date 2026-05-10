@@ -32,17 +32,40 @@ return function(parsed)
 		return table.concat(t)
 	end
 
+	local function lIName()
+		local pool = {"ll","lI","Il","II","lll","llI","lIl","Ill","lllI","llIl","lIll","Illl"}
+		local base = pool[math.random(1, #pool)]
+		local extra = math.random(2, 5)
+		local chars = {}
+		for i = 1, extra do
+			chars[i] = (math.random(0,1) == 0) and "l" or "I"
+		end
+		return base .. table.concat(chars)
+	end
+
+	local function lIName()
+		local pool = {"ll","lI","Il","II","lll","llI","lIl","Ill","lllI","llIl","lIll","Illl"}
+		local base = pool[math.random(1, #pool)]
+		local extra = math.random(6, 14)
+		local chars = {}
+		for i = 1, extra do
+			chars[i] = (math.random(0,1) == 0) and "l" or "I"
+		end
+		return base .. table.concat(chars)
+	end
+
 	local nameDecryptFn  = randomName()
 	local nameUnpackFn   = randomName()
 	local nameB10Decode  = randomName()
 	local nameXorBit     = randomName()
 	local nameNibbleSwap = randomName()
 	local nameVmFn       = randomName()
-	local namePointer    = randomName()
-	local nameStack      = randomName()
-	local nameUpvals     = randomName()
-	local namePrevStack  = randomName()
+	local namePointer    = lIName()
+	local nameStack      = lIName()
+	local nameUpvals     = lIName()
+	local namePrevStack  = lIName()
 	_G.__decryptFnName   = nameDecryptFn
+	_G.__vmProtectedNames = {namePointer, nameStack, nameUpvals, namePrevStack}
 
 	local prefixes = {"LOL","BRODU","GAY","SHET","WOW","FREAK","BRAT","NOOOOOOOOOO"}
 	local chosenPrefix = prefixes[math.random(1, #prefixes)] .. "!"
