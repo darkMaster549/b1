@@ -96,6 +96,7 @@ return function(inputFile, outputTo)
             return minifier.Minify(vmTree, {
                 RenameVariables = true,
                 RenameGlobals   = true,
+                ProtectedNames  = _G.__vmProtectedNames or {},
             })
         end)
         if ok2 and result and #result > 0 then
