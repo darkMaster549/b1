@@ -15,13 +15,24 @@ return function(parsed)
 	local numExpr      = settings.NumberToExpressions and require("Resources.NumberExpressions") or nil
 	local blockShuffle = settings.BlockShuffle and require("Resources.BlockShuffle") or nil
 
-	-- load merged opcode table
-	local AllOpCodes   = require("Vm.OpCodes")
-	local LUA51_OPS    = AllOpCodes[51]
-	local LUAU_OPS     = AllOpCodes[52]
+	local AllOpCodes = require("Vm.OpCodes")
+	local LUA51_OPS  = AllOpCodes[51]
+	local LUAU_OPS   = AllOpCodes[52]
 
-	local decKey, cShift = tostring(_G.Random(100,400)), tostring(_G.Random(3,10))
+	local cShift = _G.Random(3, 10)
 	print("CONSTANT SHIFT AMOUNT:", cShift)
+
+	local function xorSimple(a, b)
+		local r, p = 0, 1
+		while a > 0 or b > 0 do
+			if a % 2 ~= b % 2 then r = r + p end
+			a, b, p = math.floor(a/2), math.floor(b/2), p*2
+		end
+		return r
+	end
+	local part1 = _G.Random(100, 999)
+	local part2 = _G.Random(100, 999)
+	local part3 = xorSimple(xorSimple(cShift, part1), part2)
 
 	local function randomName()
 		local chars = "abcdefghijklmnopqrstuvwxyz"
@@ -33,20 +44,9 @@ return function(parsed)
 	end
 
 	local function lIName()
-		local pool = {"ll","lI","Il","II","lll","llI","lIl","Ill","lllI","llIl","lIll","Illl"}
+		local pool = {"e","lI","Il","1I","liI","l","l","I","l","l","l","I"}
 		local base = pool[math.random(1, #pool)]
-		local extra = math.random(2, 5)
-		local chars = {}
-		for i = 1, extra do
-			chars[i] = (math.random(0,1) == 0) and "l" or "I"
-		end
-		return base .. table.concat(chars)
-	end
-
-	local function lIName()
-		local pool = {"ll","lI","Il","II","lll","llI","lIl","Ill","lllI","llIl","lIll","Illl"}
-		local base = pool[math.random(1, #pool)]
-		local extra = math.random(6, 14)
+		local extra = math.random(1, 1)
 		local chars = {}
 		for i = 1, extra do
 			chars[i] = (math.random(0,1) == 0) and "l" or "I"
@@ -64,7 +64,16 @@ return function(parsed)
 	local nameStack      = lIName()
 	local nameUpvals     = lIName()
 	local namePrevStack  = lIName()
-	_G.__decryptFnName   = nameDecryptFn
+	local namePart1      = randomName()
+	local namePart2      = randomName()
+	local namePart3      = randomName()
+	local nameXorFn      = randomName()
+	local nameCShift     = randomName()
+	local nameMakeSbox   = randomName()
+	local nameInvSbox    = randomName()
+	local nameDecConst   = randomName()
+
+	_G.__decryptFnName    = nameDecryptFn
 	_G.__vmProtectedNames = {namePointer, nameStack, nameUpvals, namePrevStack}
 
 	local prefixes = {"LOL","BRODU","GAY","SHET","WOW","FREAK","BRAT","NOOOOOOOOOO"}
@@ -76,6 +85,9 @@ return function(parsed)
 		:gsub("__b10Decode",         nameB10Decode)
 		:gsub("__DECRYPT_FN_NAME__", nameDecryptFn)
 		:gsub("__UNPACK_FN_NAME__",  nameUnpackFn)
+		:gsub("__makeSbox",          nameMakeSbox)
+		:gsub("__makeInvSbox",       nameInvSbox)
+		:gsub("__decodeConstant",    nameDecConst)
 
 	local protoAt, tree, protosCount, scannedProtos = 0, "", 0, {}
 	local shiftAmt = settings.ConstantProtection and _G.Random(10,20) or 0
@@ -175,6 +187,35 @@ return function(parsed)
 		return (result == "" and "~" or result)
 	end
 
+	local function makeSbox(salt)
+		local s = {}
+		for i = 0, 255 do s[i] = i end
+		local r = salt
+		for i = 255, 1, -1 do
+			r = (r * 1664525 + 1013904223) % 4294967296
+			local j = r % (i + 1)
+			s[i], s[j] = s[j], s[i]
+		end
+		return s
+	end
+
+	local function encodeConstant(input, salt, idx)
+		if not input or #input == 0 then return "~" end
+		local sbox = makeSbox(salt)
+		local out  = {}
+		local prev = salt % 256
+		for i = 1, #input do
+			local b   = input:byte(i)
+			local key = (salt * 31 + idx * 17 + i * 7) % 256
+			b = xorBit(b, key)
+			b = sbox[b]
+			b = xorBit(b, prev)
+			prev = b
+			out[i] = string.format("%03d", b)
+		end
+		return table.concat(out)
+	end
+
 	local function junkBranch()
 		local fakePtr = math.random(100000, 999999)
 		local junkVar = randomName()
@@ -197,39 +238,36 @@ return function(parsed)
 			table.insert(mixed, junk)
 		end
 
-		local encs, salts, shifts = {}, {}, {}
+		local encs, salts, idxs = {}, {}, {}
 
 		for i = 1, #mixed do
-			local c = mixed[i]
-			local perShift = (tonumber(cShift) + i * 3) % 20 + 1
-			table.insert(shifts, tostring(perShift))
+			local c    = mixed[i]
+			local salt = math.random(100, 9999)
+			local idx  = i
 
-			local raw = type(c) == "table" and tostring(c.Value) or tostring(c)
-			local byted = raw:gsub(".", function(b)
-				local v = b:byte() - perShift
-				if v < 0 then v = v + 256 end
-				return string.char(v)
-			end)
+			local raw   = type(c) == "table" and tostring(c.Value) or tostring(c)
+			local byted = raw
 
 			if c.Type == "number"  then byted = byted .. string.char(11) end
 			if c.Type == "boolean" then byted = byted .. string.char(7)  end
 			if c.Type == "nil"     then byted = byted .. string.char(6)  end
 
-			local salt = math.random(100, 9999)
-			local enc = encFn(byted, salt)
+			local enc = encodeConstant(byted, salt, idx)
 			enc = enc or "~"
 			table.insert(encs,  enc)
 			table.insert(salts, tostring(salt))
+			table.insert(idxs,  tostring(idx))
 		end
 
 		local total = #encs
 		local raw = tostring(total) .. "\n"
-			.. table.concat(encs,   "\n") .. "\n"
-			.. table.concat(salts,  "\n") .. "\n"
-			.. table.concat(shifts, "\n")
+			.. table.concat(encs,  "\n") .. "\n"
+			.. table.concat(salts, "\n") .. "\n"
+			.. table.concat(idxs,  "\n")
 
-		local blob = base10Encode(raw, 0)
-		return '"' .. chosenPrefix .. blob .. '"'
+		local outerSalt = math.random(1000, 9999)
+		local blob = base10Encode(raw, outerSalt)
+		return chosenPrefix .. string.format("%04d", outerSalt) .. blob
 	end
 
 	local function genOpcode(inst, idx, all)
@@ -271,11 +309,11 @@ return function(parsed)
 	end
 
 	local function readInsts(curInsts, _, extra)
-		local opcodeMap = {}
-		local chunkSize = 100
-		local chunks = {}
+		local opcodeMap  = {}
+		local chunkSize  = 100
+		local chunks     = {}
 		local currentChunk = {}
-		local isFirst = true
+		local isFirst    = true
 		local branchCount = 0
 
 		for i, inst in ipairs(curInsts) do
@@ -351,13 +389,13 @@ return function(parsed)
 		end
 
 		local fnDefs = {}
-		local calls = {}
+		local calls  = {}
 		for _, chunk in ipairs(chunks) do
-			local fnName = randomName()
+			local fnName   = randomName()
 			local chunkStr = chunk
-			chunkStr = chunkStr:gsub("Stack",    nameStack)
-			chunkStr = chunkStr:gsub("Upvalues", nameUpvals)
-			chunkStr = chunkStr:gsub("prevStack",namePrevStack)
+			chunkStr = chunkStr:gsub("Stack",     nameStack)
+			chunkStr = chunkStr:gsub("Upvalues",  nameUpvals)
+			chunkStr = chunkStr:gsub("prevStack", namePrevStack)
 			table.insert(fnDefs, ("local function %s()\n%s\nend"):format(fnName, chunkStr))
 			table.insert(calls, fnName .. "()")
 		end
@@ -376,7 +414,7 @@ return function(parsed)
 				local name = "PROTOTYPE"..protoAt.."HERE"
 				_G.display("--> Reading prototype: "..protoAt..(ex or ""),"yellow")
 
-				local offset = #consts
+				local offset     = #consts
 				local protoMapId = "proto_"..protoAt
 				protoOffsets[protoMapId] = offset
 				for _, c in ipairs(p.Constants) do table.insert(consts, c) end
@@ -435,24 +473,73 @@ end
 		tree,
 		namePointer, namePointer)
 
-	tree = tree:gsub(":CONSTANT_SHIFTER:", tostring(cShift))
+	tree = tree:gsub(":CONSTANT_SHIFTER:", nameCShift)
 
-	return ([[%s
-local __cShift = %s
+	-- split key code (3 random numbers, real cShift never appears)
+	local splitKeyCode = string.format(
+		"local function %s(a,b) local r,p=0,1 while a>0 or b>0 do if a%%2~=b%%2 then r=r+p end a,b,p=math.floor(a/2),math.floor(b/2),p*2 end return r end\n"..
+		"local %s=%d\n"..
+		"local %s=%d\n"..
+		"local %s=%d\n"..
+		"local %s=%s(%s(%s,%s),%s)\n",
+		nameXorFn,
+		namePart1, part1,
+		namePart2, part2,
+		namePart3, part3,
+		nameCShift, nameXorFn, nameXorFn, namePart1, namePart2, namePart3
+	)
+
+	-- get the blob string (no outer quotes, raw)
+	local blobRaw = getConsts(consts)
+
+	-- split blob into 3 pieces at random cut points
+	local blobLen  = #blobRaw
+	local cut1     = math.random(math.floor(blobLen * 0.2), math.floor(blobLen * 0.4))
+	local cut2     = math.random(math.floor(blobLen * 0.5), math.floor(blobLen * 0.7))
+	local piece1   = blobRaw:sub(1, cut1)
+	local piece2   = blobRaw:sub(cut1+1, cut2)
+	local piece3   = blobRaw:sub(cut2+1)
+
+	local namePiece1  = randomName()
+	local namePiece2  = randomName()
+	local namePiece3  = randomName()
+	local nameBlobVar = randomName()
+
+	-- blob pieces go ABOVE the VM function, sandwiched between other code
+	local blobSetup = string.format(
+		"local %s=%q\nlocal %s=%q\nlocal %s=%q\nlocal %s=%s..%s..%s\n",
+		namePiece1, piece1,
+		namePiece2, piece2,
+		namePiece3, piece3,
+		nameBlobVar, namePiece1, namePiece2, namePiece3
+	)
+
+	-- final output structure:
+	-- [decTpl functions]
+	-- [splitKeyCode - 3 random number locals + xor assembler]
+	-- [blobSetup - 3 piece locals + concat into blobVar]  <-- blob buried here
+	-- [__env]
+	-- [vmFn definition - hundreds of lines of VM code]
+	-- [vmFn call - references blobVar, not a raw string]
+	return (([[%s
+%s
+%s
 local __env = getfenv and getfenv(1) or _ENV
 local function %s(Env, __d, __constFn)
 local decrypt = __d
 local __constants = __constFn()
 %s
 end
-%s(__env, %s, function() return %s(%s, __cShift) end)]]):format(
+%s(__env, %s, function() return %s(%s, %s) end)]]):format(
 		decTpl,
-		cShift,
+		splitKeyCode,
+		blobSetup,
 		nameVmFn,
 		tree,
 		nameVmFn,
 		nameDecryptFn,
 		nameUnpackFn,
-		getConsts(consts))
+		nameBlobVar,
+		nameCShift))
 
 end
