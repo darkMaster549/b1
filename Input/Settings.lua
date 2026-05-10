@@ -14,11 +14,11 @@ return {
 	["LuaUCompatibility"]     = false,  -- Removes Luau specific syntax to make it compatible with Lua 5.1 compiler
 	["LuauMode"]              = false,  -- Use Luau 80+ opcode set instead of Lua 5.1 38 opcodes
 	--
-	-- IronBrew passes
-	["IBPasses"]              = true,   -- master toggle for all IB passes
-	["IBBounce"]              = true,   -- JMP chaining
-	["IBTestFlip"]            = true,   -- flip EQ/LT/LE/TEST A register randomly
-	["IBEqMutate"]            = true,  -- expand EQ -> LT+JMP+LE+JMP+JMP (heavy)
-	["IBTestSpam"]            = true,  -- recursive branch duplication (very heavy)
+	-- Hebrew old Passes - This have lots of bugs that i literally can't fix rn
+	["IBPasses"]              = false,   -- master toggle for all IB passes
+	["IBBounce"]              = false,   -- JMP chaining
+	["IBTestFlip"]            = false,   -- flip EQ/LT/LE/TEST A register randomly
+	["IBEqMutate"]            = false,  -- expand EQ -> LT+JMP+LE+JMP+JMP (heavy)
+	["IBTestSpam"]            = false,  -- recursive branch duplication (very heavy)
 	["IBTestSpamDepth"]       = 2,      -- recursion depth (IB uses 3, keep at 2 for sanity)
 }
