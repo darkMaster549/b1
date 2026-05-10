@@ -1295,10 +1295,13 @@ local function indexToVarName(index)
     return id
 end
 
-local function MinifyVariables(globalScope, rootScope, renameGlobals)
+local function MinifyVariables(globalScope, rootScope, renameGlobals, protectedNames)
     local globalUsedNames = {}
     for kw in pairs(Keywords) do
         globalUsedNames[kw] = true
+    end
+    for _, n in ipairs(protectedNames or {}) do
+        globalUsedNames[n] = true
     end
 
     local allVariables = {}
@@ -1324,6 +1327,21 @@ local function MinifyVariables(globalScope, rootScope, renameGlobals)
     for _, _var in ipairs(allVariables) do
         _var.UsedNameArray = {}
     end
+
+    -- skip protected names from renaming
+    local protected = {}
+    for _, n in ipairs(protectedNames or {}) do
+        protected[n] = true
+    end
+    local filtered = {}
+    for _, _var in ipairs(allVariables) do
+        if protected[_var.Name] then
+            _var.Name = _var.Name -- keep as-is
+        else
+            filtered[#filtered+1] = _var
+        end
+    end
+    allVariables = filtered
 
     local nextValidNameIndex = 0
     local varNamesLazy = {}
@@ -1665,7 +1683,7 @@ function LuaMinifier.Minify(source, options)
     local glb, root = AddVariableInfo(ast)
 
     if renameVars then
-        MinifyVariables(glb, root, renameGlobals)
+        MinifyVariables(glb, root, renameGlobals, options.ProtectedNames)
     end
 
     return StripAndPrint(ast)
