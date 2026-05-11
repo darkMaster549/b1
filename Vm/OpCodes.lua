@@ -1,5 +1,13 @@
--- Merged OpCodes (Lua51 + Luau) , table dispatch
+-- Merged OpCodes
 -- This File Is Part of B1 OBFUSCATOR 
+-- What's new? ↓
+-- GETIMPORT chain-index, NEWCLOSURE rawget upval copy, FORGLOOP control var fix
+-- blob separator \n→|, unique names for pointer/Stack/Upvals/prevStack
+-- Vm/Resources/Templates/DecryptStringsTemplate.lua — gmatch separator \n→|
+-- removed "1I" from lIName pool (was generating invalid identifiers starting with digit)
+-- — (via TreeGenerator gsub fix) word-boundary replacements
+-- i fix a lot of bugs in not sure if all are fully fixed in still testing lot of scripts I've been fixing this like 2 or 3 days just to fix those file including this File.
+-- it's hard to build Obfuscator just One person lol
 local OpCodes = {}
 
 -- ==================== LUA 5.1 ====================
@@ -440,29 +448,13 @@ OpCodes[51][36] = function(inst, shiftAmount, constant, settings) -- CLOSURE
 		local Args = {...}
 		local C = __constants
 
-		if next(Map) then
-			setmeta(Upvalues, {
-			    [__index] = function(self, Key)
-			        local map = Map[Key]
-			        if not map then return nil end
-			        if map[1] == 0 then
-			            return prevStack[map[2]]
-			        else
-			            return prevUpvalues[map[2]]
-			        end
-			    end,
-			    [__newindex] = function(self, Key, Value)
-			        local map = Map[Key]
-			        if not map then return end
-			        if map[1] == 0 then
-			            prevStack[map[2]] = Value
-			        else
-			            prevUpvalues[map[2]] = Value
-			        end
-			    end,
-			    [__metatable] = {}
-			})
-		end
+                for k, map in next, Map do
+                        if map[1] == 0 then
+                                Upvalues[k] = rawget(prevStack, map[2])
+                        else
+                                Upvalues[k] = rawget(prevUpvalues, map[2])
+                        end
+                end
 		local argCount = #Args
 		for i = 1, argCount do
 			Stack[i - 1] = Args[i]
@@ -588,7 +580,19 @@ end
 OpCodes[52][10] = function(inst, shiftAmount, constant, settings) -- GETIMPORT
 	local d = inst.D or inst.Bx or 0
 	local mappedIdx = _G.getMappedConstant(d)
-	return ("\tStack[:A:] = Env[C[%d]]"):format(mappedIdx)
+	local code = "\n\tdo\n\t\tlocal _imp = C[" .. tostring(mappedIdx) .. "]\n"
+		.. "\t\tif type(_imp) == \"string\" then\n"
+		.. "\t\t\tlocal _t = Env\n"
+		.. "\t\t\tfor _k in (_imp .. \".\"):gmatch(\"([^.]+)%.\") do\n"
+		.. "\t\t\t\tif type(_t) ~= \"table\" and type(_t) ~= \"userdata\" then _t = nil; break end\n"
+		.. "\t\t\t\t_t = _t[_k]\n"
+		.. "\t\t\tend\n"
+		.. "\t\t\tStack[:A:] = _t\n"
+		.. "\t\telse\n"
+		.. "\t\t\tStack[:A:] = _imp\n"
+		.. "\t\tend\n"
+		.. "\tend\n"
+	return code
 end
 
 OpCodes[52][11] = function(inst, shiftAmount, constant, settings) -- GETTABLE
@@ -645,21 +649,13 @@ OpCodes[52][17] = function(inst, shiftAmount, constant, settings) -- NEWCLOSURE
 		local Args = {...}
 		local C = __constants
 
-		if next(Map) then
-			setmeta(Upvalues, {
-				[__index] = function(self, Key)
-					local map = Map[Key]
-					if not map then return nil end
-					if map[1] == 0 then return prevStack[map[2]] else return prevUpvalues[map[2]] end
-				end,
-				[__newindex] = function(self, Key, Value)
-					local map = Map[Key]
-					if not map then return end
-					if map[1] == 0 then prevStack[map[2]] = Value else prevUpvalues[map[2]] = Value end
-				end,
-				[__metatable] = {}
-			})
-		end
+                for k, map in next, Map do
+                        if map[1] == 0 then
+                                Upvalues[k] = rawget(prevStack, map[2])
+                        else
+                                Upvalues[k] = rawget(prevUpvalues, map[2])
+                        end
+                end
 
 		local argCount = #Args
 		for i = 1, argCount do
@@ -1052,14 +1048,14 @@ OpCodes[52][57] = function(instruction, shiftAmount, constant, settings) -- FORG
 	local aux = instruction.AUX or 1
 	return ([==[
 	local _result = {Stack[%d](Stack[%d], Stack[%d])}
-	for i = 1, %d do
-		Stack[%d + i] = _result[i]
-	end
-	if Stack[%d] ~= nil then
-		Stack[%d] = Stack[%d]
+	if _result[1] ~= nil then
+		Stack[%d] = _result[1]
+		for i = 1, %d do
+			Stack[%d + i] = _result[i]
+		end
 		pointer = pointer + %d
 	end
-	]==]):format(reg_a, reg_a+1, reg_a+2, aux, reg_a+2, reg_a+3, reg_a+2, reg_a+3, d)
+	]==]):format(reg_a, reg_a+1, reg_a+2, reg_a+2, aux, reg_a+2, d)
 end
 
 OpCodes[52][58] = function(instruction, shiftAmount, constant, settings) -- FORGPREP_INEXT
@@ -1128,21 +1124,13 @@ OpCodes[52][63] = function(inst, shiftAmount, constant, settings) -- DUPCLOSURE
 		local Args = {...}
 		local C = __constants
 
-		if next(Map) then
-			setmeta(Upvalues, {
-				[__index] = function(self, Key)
-					local map = Map[Key]
-					if not map then return nil end
-					if map[1] == 0 then return prevStack[map[2]] else return prevUpvalues[map[2]] end
-				end,
-				[__newindex] = function(self, Key, Value)
-					local map = Map[Key]
-					if not map then return end
-					if map[1] == 0 then prevStack[map[2]] = Value else prevUpvalues[map[2]] = Value end
-				end,
-				[__metatable] = {}
-			})
-		end
+                for k, map in next, Map do
+                        if map[1] == 0 then
+                                Upvalues[k] = rawget(prevStack, map[2])
+                        else
+                                Upvalues[k] = rawget(prevUpvalues, map[2])
+                        end
+                end
 
 		local argCount = #Args
 		for i = 1, argCount do
