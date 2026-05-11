@@ -44,7 +44,7 @@ return function(parsed)
 	end
 
 	local function lIName()
-		local pool = {"e","lI","Il","1I","liI","l","l","I","l","l","l","I"}
+		local pool = {"e","lI","Il","liI","l","l","I","l","l","l","I"}
 		local base = pool[math.random(1, #pool)]
 		local extra = math.random(1, 1)
 		local chars = {}
@@ -60,10 +60,17 @@ return function(parsed)
 	local nameXorBit     = randomName()
 	local nameNibbleSwap = randomName()
 	local nameVmFn       = randomName()
-	local namePointer    = lIName()
-	local nameStack      = lIName()
-	local nameUpvals     = lIName()
-	local namePrevStack  = lIName()
+	local function uniqueLIName(used)
+		local n
+		repeat n = lIName() until not used[n]
+		used[n] = true
+		return n
+	end
+	local _usedNames = {}
+	local namePointer    = uniqueLIName(_usedNames)
+	local nameStack      = uniqueLIName(_usedNames)
+	local nameUpvals     = uniqueLIName(_usedNames)
+	local namePrevStack  = uniqueLIName(_usedNames)
 	local namePart1      = randomName()
 	local namePart2      = randomName()
 	local namePart3      = randomName()
@@ -260,10 +267,10 @@ return function(parsed)
 		end
 
 		local total = #encs
-		local raw = tostring(total) .. "\n"
-			.. table.concat(encs,  "\n") .. "\n"
-			.. table.concat(salts, "\n") .. "\n"
-			.. table.concat(idxs,  "\n")
+		local raw = tostring(total) .. "|"
+			.. table.concat(encs,  "|") .. "|"
+			.. table.concat(salts, "|") .. "|"
+			.. table.concat(idxs,  "|")
 
 		local outerSalt = math.random(1000, 9999)
 		local blob = base10Encode(raw, outerSalt)
@@ -295,7 +302,7 @@ return function(parsed)
 			local parts, li, pc = {}, (idx or 0)+1, 0
 			while all and all[li] and (all[li].OpcodeName=="PSEUDO" or all[li].Opcode==-1) do
 				table.insert(parts,("[%s] = {%s, %s}"):format(
-					pc, getReg(all[li],"C") or 0, getReg(all[li],"B")))
+					pc, getReg(all[li],"A") or 0, getReg(all[li],"B")))
 				pc=pc+1; li=li+1
 			end
 			r = replace(r,"MAPPING","{"..table.concat(parts,", ").."}")
@@ -371,20 +378,20 @@ return function(parsed)
 		if settings.BlockShuffle then
 			_G.display("--> Generating Block Shuffle"..(extra and " ("..extra..")" or ""),"yellow")
 			local result = blockShuffle(opcodeMap, settings.NumberToExpressions)
-			result = result:gsub("pointer",   namePointer)
+			result = result:gsub("prevStack", namePrevStack)
 			result = result:gsub("Stack",     nameStack)
 			result = result:gsub("Upvalues",  nameUpvals)
-			result = result:gsub("prevStack", namePrevStack)
+			result = result:gsub("pointer",   namePointer)
 			return numExpr and numExpr(result) or result
 		end
 
 		if settings.ControlFlowFlattening then
 			_G.display("--> Generating Control Flow Flattening"..(extra and " ("..extra..")" or ""),"yellow")
 			local result = CFF:generateState(opcodeMap)
-			result = result:gsub("pointer",   namePointer)
+			result = result:gsub("prevStack", namePrevStack)
 			result = result:gsub("Stack",     nameStack)
 			result = result:gsub("Upvalues",  nameUpvals)
-			result = result:gsub("prevStack", namePrevStack)
+			result = result:gsub("pointer",   namePointer)
 			return numExpr and numExpr(result) or result
 		end
 
@@ -393,9 +400,9 @@ return function(parsed)
 		for _, chunk in ipairs(chunks) do
 			local fnName   = randomName()
 			local chunkStr = chunk
+			chunkStr = chunkStr:gsub("prevStack", namePrevStack)
 			chunkStr = chunkStr:gsub("Stack",     nameStack)
 			chunkStr = chunkStr:gsub("Upvalues",  nameUpvals)
-			chunkStr = chunkStr:gsub("prevStack", namePrevStack)
 			table.insert(fnDefs, ("local function %s()\n%s\nend"):format(fnName, chunkStr))
 			table.insert(calls, fnName .. "()")
 		end
@@ -450,8 +457,8 @@ return function(parsed)
 
 	header = header:gsub("CONSTANTS_HERE_BASEVM", "")
 	header = header
-		:gsub("Upvalues",  nameUpvals)
 		:gsub("prevStack", namePrevStack)
+		:gsub("Upvalues",  nameUpvals)
 
 	local vmTemplate = [[
 %s
