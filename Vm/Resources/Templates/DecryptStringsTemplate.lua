@@ -82,7 +82,7 @@ local function __UNPACK_FN_NAME__(__blob,__cShift)
     local __raw=__b10Decode(__data,__outerSalt)
     if not __raw or #__raw==0 then return {} end
     local __lines={}
-    for __line in (__raw.."\n"):gmatch("([^\n]*)\n") do
+    for __line in (__raw.."|"):gmatch("([^|]*)%|") do
         __lines[#__lines+1]=__line
     end
     local __total=tonumber(__lines[1]) or 0
