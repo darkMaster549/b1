@@ -482,7 +482,7 @@ end
 
 	tree = tree:gsub(":CONSTANT_SHIFTER:", nameCShift)
 
-	-- split key code (3 random numbers, real cShift never appears)
+	-- split key code
 	local splitKeyCode = string.format(
 		"local function %s(a,b) local r,p=0,1 while a>0 or b>0 do if a%%2~=b%%2 then r=r+p end a,b,p=math.floor(a/2),math.floor(b/2),p*2 end return r end\n"..
 		"local %s=%d\n"..
@@ -496,10 +496,8 @@ end
 		nameCShift, nameXorFn, nameXorFn, namePart1, namePart2, namePart3
 	)
 
-	-- get the blob string (no outer quotes, raw)
+	-- blob
 	local blobRaw = getConsts(consts)
-
-	-- split blob into 3 pieces at random cut points
 	local blobLen  = #blobRaw
 	local cut1     = math.random(math.floor(blobLen * 0.2), math.floor(blobLen * 0.4))
 	local cut2     = math.random(math.floor(blobLen * 0.5), math.floor(blobLen * 0.7))
@@ -512,7 +510,6 @@ end
 	local namePiece3  = randomName()
 	local nameBlobVar = randomName()
 
-	-- blob pieces go ABOVE the VM function, sandwiched between other code
 	local blobSetup = string.format(
 		"local %s=%q\nlocal %s=%q\nlocal %s=%q\nlocal %s=%s..%s..%s\n",
 		namePiece1, piece1,
@@ -521,14 +518,13 @@ end
 		nameBlobVar, namePiece1, namePiece2, namePiece3
 	)
 
-	-- final output structure:
-	-- [decTpl functions]
-	-- [splitKeyCode - 3 random number locals + xor assembler]
-	-- [blobSetup - 3 piece locals + concat into blobVar]  <-- blob buried here
-	-- [__env]
-	-- [vmFn definition - hundreds of lines of VM code]
-	-- [vmFn call - references blobVar, not a raw string]
-	return (([[%s
+	-- Final output order:
+	-- 1. splitKeyCode   (xor fn + part1/part2/part3 + cShift reconstruction)
+	-- 2. blobSetup      (3 blob pieces + concat)
+	-- 3. vmFn definition (the actual VM - hundreds of lines)
+	-- 4. decTpl         (decrypt functions - now BELOW the VM body)
+	-- 5. vmFn call      (last line - calls everything)
+	return (([[
 %s
 %s
 local __env = getfenv and getfenv(1) or _ENV
@@ -537,12 +533,13 @@ local decrypt = __d
 local __constants = __constFn()
 %s
 end
+%s
 %s(__env, %s, function() return %s(%s, %s) end)]]):format(
-		decTpl,
 		splitKeyCode,
 		blobSetup,
 		nameVmFn,
 		tree,
+		decTpl,
 		nameVmFn,
 		nameDecryptFn,
 		nameUnpackFn,
