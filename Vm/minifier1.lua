@@ -45,6 +45,7 @@ local Symbols = {
     ['/']=true,['^']=true,['%']=true,['#']=true,
     [',']=true,['{']=true,['}']=true,[':']=true,
     ['[']=true,[']']=true,['(']=true,['.']=true,
+    ['::'] = true,
 }
 
 local EqualSymbols = {['~']=true,['=']=true,['>']=true,['<']=true}
@@ -683,6 +684,33 @@ local function CreateLuaParser(text)
         return node
     end
 
+
+    local function gotostat()
+        local gotoKw = get()
+        local label  = expect('Ident')
+        return {
+            Type = 'GotoStat',
+            Token_Goto  = gotoKw,
+            Token_Label = label,
+            GetFirstToken = function(s) return s.Token_Goto  end,
+            GetLastToken  = function(s) return s.Token_Label end,
+        }
+    end
+
+    local function labelstat()
+        local open  = get()
+        local name  = expect('Ident')
+        local close = expect('Symbol', '::')
+        return {
+            Type = 'LabelStat',
+            Token_Open  = open,
+            Token_Name  = name,
+            Token_Close = close,
+            GetFirstToken = function(s) return s.Token_Open  end,
+            GetLastToken  = function(s) return s.Token_Close end,
+        }
+    end
+
     local function exprstat()
         local ex = primaryexpr()
         if ex.Type == 'MethodExpr' or ex.Type == 'CallExpr' then
@@ -960,7 +988,11 @@ local function CreateLuaParser(text)
         elseif tok.Source == 'break' then
             return true, breakstat()
         elseif tok.Source == 'continue' then
-            return true, continuestat()
+            return false, continuestat()   -- NOT isLast
+        elseif tok.Source == 'goto' then
+            return false, gotostat()
+        elseif tok.Type == 'Symbol' and tok.Source == '::' then
+            return false, labelstat()
         else
             return false, exprstat()
         end
@@ -1660,6 +1692,13 @@ local function StripAndPrint(ast)
                 printExpr(e)
                 if stat.Token_RhsSeparatorList[i] then emit(',') end
             end
+        elseif stat.Type == 'GotoStat' then
+            emit('goto')
+            emit(stat.Token_Label.Source)
+        elseif stat.Type == 'LabelStat' then
+            emit('::')
+            emit(stat.Token_Name.Source)
+            emit('::')
         else
             error("printStat: unknown type " .. tostring(stat.Type))
         end
