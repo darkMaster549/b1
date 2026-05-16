@@ -56,7 +56,10 @@ return function(parsed)
 
 	local nameDecryptFn  = randomName()
 	local nameUnpackFn   = randomName()
-	local nameB10Decode  = randomName()
+	local nameB91Decode  = randomName()
+	local nameB91Unpack  = randomName()
+	local nameB91Charset = randomName()
+	local nameB91Map     = randomName()
 	local nameXorBit     = randomName()
 	local nameNibbleSwap = randomName()
 	local nameVmFn       = randomName()
@@ -87,9 +90,12 @@ return function(parsed)
 	local chosenPrefix = prefixes[math.random(1, #prefixes)] .. "!"
 
 	decTpl = decTpl
+		:gsub("__b91c",              nameB91Charset)
+		:gsub("__b91m",              nameB91Map)
 		:gsub("__xorBit",            nameXorBit)
 		:gsub("__nibbleSwap",        nameNibbleSwap)
-		:gsub("__b10Decode",         nameB10Decode)
+		:gsub("__b91Unpack",         nameB91Unpack)
+		:gsub("__b91Decode",         nameB91Decode)
 		:gsub("__DECRYPT_FN_NAME__", nameDecryptFn)
 		:gsub("__UNPACK_FN_NAME__",  nameUnpackFn)
 		:gsub("__makeSbox",          nameMakeSbox)
@@ -177,19 +183,42 @@ return function(parsed)
 		return r
 	end
 
-	local function base10Encode(input, salt)
+	local BASE91 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz!#$%&()*+,-./:;<=>?@[]^_`{|}~"
+
+	local function base91Encode(input, salt)
 		if not input or #input == 0 then return "~" end
-		local src = {}
-		for i = 1, #input do src[i] = string.byte(input, i) end
 		local transformed = {}
-		for i = 1, #src do
-			local b = (src[i] + (i % 97) + (salt % 13)) % 256
+		for i = 1, #input do
+			local b = (string.byte(input, i) + (i % 97) + (salt % 13)) % 256
 			b = nibbleSwap(b)
 			local prev = (i > 1) and transformed[i-1] or (0x5A + salt % 7)
 			transformed[i] = xorBit(b, prev % 256)
 		end
 		local out = {}
-		for i = 1, #transformed do out[i] = string.format("%03d", transformed[i]) end
+		local b91, n = 0, 0
+		for i = 1, #transformed do
+			b91 = b91 + transformed[i] * (2 ^ n)
+			n = n + 8
+			if n > 13 then
+				local val = b91 % 8192
+				if val > 88 then
+					b91 = math.floor(b91 / 8192)
+					n = n - 13
+				else
+					val = b91 % 16384
+					b91 = math.floor(b91 / 16384)
+					n = n - 14
+				end
+				out[#out+1] = BASE91:sub((val % 91) + 1, (val % 91) + 1)
+				out[#out+1] = BASE91:sub(math.floor(val / 91) + 1, math.floor(val / 91) + 1)
+			end
+		end
+		if n > 0 then
+			out[#out+1] = BASE91:sub((b91 % 91) + 1, (b91 % 91) + 1)
+			if n > 7 or b91 > 90 then
+				out[#out+1] = BASE91:sub(math.floor(b91 / 91) + 1, math.floor(b91 / 91) + 1)
+			end
+		end
 		local result = table.concat(out)
 		return (result == "" and "~" or result)
 	end
@@ -209,7 +238,7 @@ return function(parsed)
 	local function encodeConstant(input, salt, idx)
 		if not input or #input == 0 then return "~" end
 		local sbox = makeSbox(salt)
-		local out  = {}
+		local bytes = {}
 		local prev = salt % 256
 		for i = 1, #input do
 			local b   = input:byte(i)
@@ -218,9 +247,33 @@ return function(parsed)
 			b = sbox[b]
 			b = xorBit(b, prev)
 			prev = b
-			out[i] = string.format("%03d", b)
+			bytes[i] = b
 		end
-		return table.concat(out)
+		local out = {}
+		local b91, n = 0, 0
+		for i = 1, #bytes do
+			b91 = b91 + bytes[i] * (2 ^ n)
+			n = n + 8
+			if n > 13 then
+				local val = b91 % 8192
+				if val > 88 then
+					b91 = math.floor(b91 / 8192); n = n - 13
+				else
+					val = b91 % 16384
+					b91 = math.floor(b91 / 16384); n = n - 14
+				end
+				out[#out+1] = BASE91:sub((val % 91) + 1, (val % 91) + 1)
+				out[#out+1] = BASE91:sub(math.floor(val / 91) + 1, math.floor(val / 91) + 1)
+			end
+		end
+		if n > 0 then
+			out[#out+1] = BASE91:sub((b91 % 91) + 1, (b91 % 91) + 1)
+			if n > 7 or b91 > 90 then
+				out[#out+1] = BASE91:sub(math.floor(b91 / 91) + 1, math.floor(b91 / 91) + 1)
+			end
+		end
+		local result = table.concat(out)
+		return (result == "" and "~" or result)
 	end
 
 	local function junkBranch()
@@ -228,6 +281,8 @@ return function(parsed)
 		local junkVar = randomName()
 		return ("if "..namePointer.." == %d then local %s = nil end\n"):format(fakePtr, junkVar)
 	end
+
+	local SEP = "\1"
 
 	local function getConsts(tc)
 		local mixed = {}
@@ -267,13 +322,13 @@ return function(parsed)
 		end
 
 		local total = #encs
-		local raw = tostring(total) .. "|"
-			.. table.concat(encs,  "|") .. "|"
-			.. table.concat(salts, "|") .. "|"
-			.. table.concat(idxs,  "|")
+		local raw = tostring(total) .. SEP
+			.. table.concat(encs,  SEP) .. SEP
+			.. table.concat(salts, SEP) .. SEP
+			.. table.concat(idxs,  SEP)
 
 		local outerSalt = math.random(1000, 9999)
-		local blob = base10Encode(raw, outerSalt)
+		local blob = base91Encode(raw, outerSalt)
 		return chosenPrefix .. string.format("%04d", outerSalt) .. blob
 	end
 
@@ -482,7 +537,6 @@ end
 
 	tree = tree:gsub(":CONSTANT_SHIFTER:", nameCShift)
 
-	-- split key code
 	local splitKeyCode = string.format(
 		"local function %s(a,b) local r,p=0,1 while a>0 or b>0 do if a%%2~=b%%2 then r=r+p end a,b,p=math.floor(a/2),math.floor(b/2),p*2 end return r end\n"..
 		"local %s=%d\n"..
@@ -496,8 +550,8 @@ end
 		nameCShift, nameXorFn, nameXorFn, namePart1, namePart2, namePart3
 	)
 
-	-- blob
 	local blobRaw = getConsts(consts)
+
 	local blobLen  = #blobRaw
 	local cut1     = math.random(math.floor(blobLen * 0.2), math.floor(blobLen * 0.4))
 	local cut2     = math.random(math.floor(blobLen * 0.5), math.floor(blobLen * 0.7))
@@ -518,13 +572,7 @@ end
 		nameBlobVar, namePiece1, namePiece2, namePiece3
 	)
 
-	-- Final output order:
-	-- 1. splitKeyCode   (xor fn + part1/part2/part3 + cShift reconstruction)
-	-- 2. blobSetup      (3 blob pieces + concat)
-	-- 3. vmFn definition (the actual VM - hundreds of lines)
-	-- 4. decTpl         (decrypt functions - now BELOW the VM body)
-	-- 5. vmFn call      (last line - calls everything)
-	return (([[
+	return (([[%s
 %s
 %s
 local __env = getfenv and getfenv(1) or _ENV
@@ -533,13 +581,12 @@ local decrypt = __d
 local __constants = __constFn()
 %s
 end
-%s
 %s(__env, %s, function() return %s(%s, %s) end)]]):format(
+		decTpl,
 		splitKeyCode,
 		blobSetup,
 		nameVmFn,
 		tree,
-		decTpl,
 		nameVmFn,
 		nameDecryptFn,
 		nameUnpackFn,
