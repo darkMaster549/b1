@@ -1,4 +1,11 @@
+-- Use base91 for better Constant Encryption.
+
+
 return [=[
+local __b91c="0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz!#$%&()*+,-./:;<=>?@[]^_`{|}~"
+local __b91m={}
+for __i=1,#__b91c do __b91m[string.byte(__b91c,__i)+1]=__i-1 end
+
 local function __xorBit(__a,__b)
     if bit32 then return bit32.bxor(__a,__b) end
     if bit then return bit.bxor(__a,__b) end
@@ -14,16 +21,40 @@ local function __nibbleSwap(__b)
     return((__b%16)*16+math.floor(__b/16))%256
 end
 
-local function __b10Decode(__encoded,__salt)
-    if not __encoded or __encoded=="~" then return "" end
-    local __bytes={}
-    for __i=1,#__encoded,3 do
-        __bytes[#__bytes+1]=tonumber(__encoded:sub(__i,__i+2)) or 0
+local function __b91Unpack(__encoded)
+    local __raw={}
+    local __acc,__bits,__d=0,0,-1
+    for __i=1,#__encoded do
+        local __v=__b91m[string.byte(__encoded,__i)+1] or 0
+        if __d<0 then
+            __d=__v
+        else
+            __d=__d+__v*91
+            local __h=__d%8192
+            if __h>88 then
+                __acc=__acc+__h*(2^__bits);__bits=__bits+13
+            else
+                __acc=__acc+(__d%16384)*(2^__bits);__bits=__bits+14
+            end
+            while __bits>7 do
+                __raw[#__raw+1]=__acc%256
+                __acc=math.floor(__acc/256)
+                __bits=__bits-8
+            end
+            __d=-1
+        end
     end
+    if __d>-1 then __raw[#__raw+1]=(__acc+__d*(2^__bits))%256 end
+    return __raw
+end
+
+local function __b91Decode(__encoded,__salt)
+    if not __encoded or __encoded=="~" then return "" end
+    local __raw=__b91Unpack(__encoded)
     local __out={}
-    for __i=1,#__bytes do
-        local __byte=__bytes[__i]
-        local __prev=((__i>1) and __bytes[__i-1] or (0x5A+__salt%7))%256
+    for __i=1,#__raw do
+        local __byte=__raw[__i]
+        local __prev=(__i>1 and __raw[__i-1] or (0x5A+__salt%7))%256
         __byte=__xorBit(__byte,__prev)
         __byte=__nibbleSwap(__byte)
         __byte=(__byte-(__i%97)-(__salt%13)+512)%256
@@ -33,7 +64,7 @@ local function __b10Decode(__encoded,__salt)
 end
 
 local __DECRYPT_FN_NAME__=function(__encoded,__salt)
-    return __b10Decode(__encoded,__salt)
+    return __b91Decode(__encoded,__salt)
 end
 
 local function __makeSbox(__salt)
@@ -56,16 +87,13 @@ end
 
 local function __decodeConstant(__encoded,__salt,__idx)
     if not __encoded or __encoded=="~" then return "" end
-    local __bytes={}
-    for __i=1,#__encoded,3 do
-        __bytes[#__bytes+1]=tonumber(__encoded:sub(__i,__i+2)) or 0
-    end
+    local __raw=__b91Unpack(__encoded)
     local __sbox=__makeSbox(__salt)
     local __inv=__makeInvSbox(__sbox)
     local __out={}
     local __prev=__salt%256
-    for __i=1,#__bytes do
-        local __b=__bytes[__i]
+    for __i=1,#__raw do
+        local __b=__raw[__i]
         local __unchained=__xorBit(__b,__prev)
         __prev=__b
         local __unsub=__inv[__unchained]
@@ -79,10 +107,10 @@ local function __UNPACK_FN_NAME__(__blob,__cShift)
     local __afterPrefix=__blob:gsub("^%u+!","")
     local __outerSalt=tonumber(__afterPrefix:sub(1,4)) or 0
     local __data=__afterPrefix:sub(5)
-    local __raw=__b10Decode(__data,__outerSalt)
+    local __raw=__b91Decode(__data,__outerSalt)
     if not __raw or #__raw==0 then return {} end
     local __lines={}
-    for __line in (__raw.."|"):gmatch("([^|]*)%|") do
+    for __line in (__raw.."\1"):gmatch("([^\1]*)\1") do
         __lines[#__lines+1]=__line
     end
     local __total=tonumber(__lines[1]) or 0
