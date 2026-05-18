@@ -572,7 +572,7 @@ end
 		nameBlobVar, namePiece1, namePiece2, namePiece3
 	)
 
-	return (([[%s
+return (([[%s
 %s
 %s
 local __env = getfenv and getfenv(1) or _ENV
@@ -582,9 +582,9 @@ local __constants = __constFn()
 %s
 end
 %s(__env, %s, function() return %s(%s, %s) end)]]):format(
-		decTpl,
 		splitKeyCode,
 		blobSetup,
+		decTpl,
 		nameVmFn,
 		tree,
 		nameVmFn,
