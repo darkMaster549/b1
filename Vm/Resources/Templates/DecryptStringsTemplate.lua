@@ -1,5 +1,4 @@
--- Use base91 for better Constant Encryption.
-
+-- Use base91 for better Constant Encryption. 100-layer decryption.
 
 return [=[
 local __b91c="0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz!#$%&()*+,-./:;<=>?@[]^_`{|}~"
@@ -85,21 +84,36 @@ local function __makeInvSbox(__sbox)
     return __inv
 end
 
-local function __decodeConstant(__encoded,__salt,__idx)
-    if not __encoded or __encoded=="~" then return "" end
-    local __raw=__b91Unpack(__encoded)
+-- decodes a byte array through one layer, returns byte array
+local function __decodeLayerBytes(__bytes,__salt,__idx)
     local __sbox=__makeSbox(__salt)
     local __inv=__makeInvSbox(__sbox)
     local __out={}
     local __prev=__salt%256
-    for __i=1,#__raw do
-        local __b=__raw[__i]
+    for __i=1,#__bytes do
+        local __b=__bytes[__i]
         local __unchained=__xorBit(__b,__prev)
         __prev=__b
         local __unsub=__inv[__unchained]
         local __key=(__salt*31+__idx*17+__i*7)%256
-        __out[__i]=string.char(__xorBit(__unsub,__key))
+        __out[__i]=__xorBit(__unsub,__key)
     end
+    return __out
+end
+
+local function __decodeConstant(__encoded,__salt,__idx)
+    if not __encoded or __encoded=="~" then return "" end
+    local __salts={}
+    for __li=1,100 do
+        __salts[__li]=(((__salt*(__li*31))+(__idx*(__li*7)))%9000)+100
+    end
+    local __data=__encoded:sub(401)
+    local __bytes=__b91Unpack(__data)
+    for __li=100,1,-1 do
+        __bytes=__decodeLayerBytes(__bytes,__salts[__li],__idx)
+    end
+    local __out={}
+    for __i=1,#__bytes do __out[__i]=string.char(__bytes[__i]) end
     return table.concat(__out)
 end
 
