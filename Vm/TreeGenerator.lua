@@ -237,22 +237,33 @@ return function(parsed)
 
 	local function encodeConstant(input, salt, idx)
 		if not input or #input == 0 then return "~" end
-		local sbox = makeSbox(salt)
-		local bytes = {}
-		local prev = salt % 256
-		for i = 1, #input do
-			local b   = input:byte(i)
-			local key = (salt * 31 + idx * 17 + i * 7) % 256
-			b = xorBit(b, key)
-			b = sbox[b]
-			b = xorBit(b, prev)
-			prev = b
-			bytes[i] = b
+		local salts = {}
+		for li = 1, 100 do
+			salts[li] = ((salt * (li * 31) + idx * (li * 7)) % 9000) + 100
 		end
+		local bytes = {}
+		for i = 1, #input do bytes[i] = input:byte(i) end
+		local function encLayer(b, s)
+			local sbox = makeSbox(s)
+			local out = {}
+			local prev = s % 256
+			for i = 1, #b do
+				local v = b[i]
+				local key = (s * 31 + idx * 17 + i * 7) % 256
+				v = xorBit(v, key)
+				v = sbox[v]
+				v = xorBit(v, prev)
+				prev = v
+				out[i] = v
+			end
+			return out
+		end
+		local layered = bytes
+		for li = 1, 100 do layered = encLayer(layered, salts[li]) end
 		local out = {}
 		local b91, n = 0, 0
-		for i = 1, #bytes do
-			b91 = b91 + bytes[i] * (2 ^ n)
+		for i = 1, #layered do
+			b91 = b91 + layered[i] * (2 ^ n)
 			n = n + 8
 			if n > 13 then
 				local val = b91 % 8192
@@ -273,7 +284,9 @@ return function(parsed)
 			end
 		end
 		local result = table.concat(out)
-		return (result == "" and "~" or result)
+		local saltPrefix = ""
+		for li = 1, 100 do saltPrefix = saltPrefix .. string.format("%04d", salts[li]) end
+		return saltPrefix .. (result == "" and "~" or result)
 	end
 
 	local function junkBranch()
