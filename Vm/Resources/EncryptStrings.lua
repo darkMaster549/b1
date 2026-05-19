@@ -15,29 +15,19 @@ local function xorBit(a, b)
     return r
 end
 
-local function base91Encode(input, salt)
-    if not input or #input == 0 then return "~" end
-    local transformed = {}
-    for i = 1, #input do
-        local b = (string.byte(input, i) + (i % 97) + (salt % 13)) % 256
-        b = nibbleSwap(b)
-        local prev = (i > 1) and transformed[i-1] or (0x5A + salt % 7)
-        transformed[i] = xorBit(b, prev % 256)
-    end
-    local out = {}
+local function bytesToB91(bytes)
     local b91, n = 0, 0
-    for i = 1, #transformed do
-        b91 = b91 + transformed[i] * (2 ^ n)
+    local out = {}
+    for i = 1, #bytes do
+        b91 = b91 + bytes[i] * (2 ^ n)
         n = n + 8
         if n > 13 then
             local val = b91 % 8192
             if val > 88 then
-                b91 = math.floor(b91 / 8192)
-                n = n - 13
+                b91 = math.floor(b91 / 8192); n = n - 13
             else
                 val = b91 % 16384
-                b91 = math.floor(b91 / 16384)
-                n = n - 14
+                b91 = math.floor(b91 / 16384); n = n - 14
             end
             out[#out+1] = BASE91:sub((val % 91) + 1, (val % 91) + 1)
             out[#out+1] = BASE91:sub(math.floor(val / 91) + 1, math.floor(val / 91) + 1)
@@ -53,6 +43,47 @@ local function base91Encode(input, salt)
     return (result == "" and "~" or result)
 end
 
+local function b91ToBytes(encoded)
+    local map = {}
+    for i = 1, #BASE91 do map[BASE91:byte(i) + 1] = i - 1 end
+    local raw = {}
+    local acc, bits, d = 0, 0, -1
+    for i = 1, #encoded do
+        local v = map[encoded:byte(i) + 1] or 0
+        if d < 0 then
+            d = v
+        else
+            d = d + v * 91
+            local h = d % 8192
+            if h > 88 then
+                acc = acc + h * (2^bits); bits = bits + 13
+            else
+                acc = acc + (d % 16384) * (2^bits); bits = bits + 14
+            end
+            while bits > 7 do
+                raw[#raw+1] = acc % 256
+                acc = math.floor(acc / 256)
+                bits = bits - 8
+            end
+            d = -1
+        end
+    end
+    if d > -1 then raw[#raw+1] = (acc + d * (2^bits)) % 256 end
+    return raw
+end
+
+local function base91Encode(input, salt)
+    if not input or #input == 0 then return "~" end
+    local transformed = {}
+    for i = 1, #input do
+        local b = (string.byte(input, i) + (i % 97) + (salt % 13)) % 256
+        b = nibbleSwap(b)
+        local prev = (i > 1) and transformed[i-1] or (0x5A + salt % 7)
+        transformed[i] = xorBit(b, prev % 256)
+    end
+    return bytesToB91(transformed)
+end
+
 local function makeSbox(salt)
     local s = {}
     for i = 0, 255 do s[i] = i end
@@ -65,79 +96,40 @@ local function makeSbox(salt)
     return s
 end
 
-local function encodeConstant(input, salt, idx)
-    if not input or #input == 0 then return "~" end
+-- encodes a byte array, returns a byte array (no b91 yet)
+local function encodeLayerBytes(inputBytes, salt, idx)
     local sbox = makeSbox(salt)
-    local out  = {}
+    local out = {}
     local prev = salt % 256
-    for i = 1, #input do
-        local b   = input:byte(i)
+    for i = 1, #inputBytes do
+        local b   = inputBytes[i]
         local key = (salt * 31 + idx * 17 + i * 7) % 256
         b = xorBit(b, key)
         b = sbox[b]
         b = xorBit(b, prev)
         prev = b
-        -- encode this single byte via base91
-        local tmp = {}
-        local acc, bits = b, 8
-        if bits > 13 then
-            local val = acc % 8192
-            if val > 88 then
-                acc = math.floor(acc / 8192); bits = bits - 13
-            else
-                val = acc % 16384
-                acc = math.floor(acc / 16384); bits = bits - 14
-            end
-            tmp[#tmp+1] = BASE91:sub((val % 91) + 1, (val % 91) + 1)
-            tmp[#tmp+1] = BASE91:sub(math.floor(val / 91) + 1, math.floor(val / 91) + 1)
-        end
-        if bits > 0 then
-            tmp[#tmp+1] = BASE91:sub((acc % 91) + 1, (acc % 91) + 1)
-            if bits > 7 or acc > 90 then
-                tmp[#tmp+1] = BASE91:sub(math.floor(acc / 91) + 1, math.floor(acc / 91) + 1)
-            end
-        end
-        out[i] = table.concat(tmp)
+        out[i] = b
     end
-    -- pack all bytes properly through base91
-    -- redo: encode full transformed bytes as one base91 stream
+    return out
+end
+
+local function encodeConstant(input, salt, idx)
+    if not input or #input == 0 then return "~" end
+    -- derive 3 independent salts
+    local s1 = (salt % 9000) + 100
+    local s2 = ((salt * 31 + idx * 7) % 9000) + 100
+    local s3 = ((salt * 17 + idx * 13) % 9000) + 100
+    -- convert input string to bytes
     local bytes = {}
-    local sbox2 = makeSbox(salt)
-    local prev2 = salt % 256
-    for i = 1, #input do
-        local b2  = input:byte(i)
-        local key = (salt * 31 + idx * 17 + i * 7) % 256
-        b2 = xorBit(b2, key)
-        b2 = sbox2[b2]
-        b2 = xorBit(b2, prev2)
-        prev2 = b2
-        bytes[i] = b2
-    end
-    local out2 = {}
-    local b91, n2 = 0, 0
-    for i = 1, #bytes do
-        b91 = b91 + bytes[i] * (2 ^ n2)
-        n2 = n2 + 8
-        if n2 > 13 then
-            local val = b91 % 8192
-            if val > 88 then
-                b91 = math.floor(b91 / 8192); n2 = n2 - 13
-            else
-                val = b91 % 16384
-                b91 = math.floor(b91 / 16384); n2 = n2 - 14
-            end
-            out2[#out2+1] = BASE91:sub((val % 91) + 1, (val % 91) + 1)
-            out2[#out2+1] = BASE91:sub(math.floor(val / 91) + 1, math.floor(val / 91) + 1)
-        end
-    end
-    if n2 > 0 then
-        out2[#out2+1] = BASE91:sub((b91 % 91) + 1, (b91 % 91) + 1)
-        if n2 > 7 or b91 > 90 then
-            out2[#out2+1] = BASE91:sub(math.floor(b91 / 91) + 1, math.floor(b91 / 91) + 1)
-        end
-    end
-    local result = table.concat(out2)
-    return (result == "" and "~" or result)
+    for i = 1, #input do bytes[i] = input:byte(i) end
+    -- apply 3 layers on raw bytes
+    local l1 = encodeLayerBytes(bytes, s1, idx)
+    local l2 = encodeLayerBytes(l1,    s2, idx)
+    local l3 = encodeLayerBytes(l2,    s3, idx)
+    -- base91 encode the final bytes
+    local encoded = bytesToB91(l3)
+    -- prepend 3 salts as 4-digit each
+    return string.format("%04d%04d%04d", s1, s2, s3) .. encoded
 end
 
 _G.__decryptFnName = _G.__decryptFnName or (function()
