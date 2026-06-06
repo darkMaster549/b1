@@ -210,12 +210,10 @@ if table.find(args,"--help") then
     print("Usage: lua Main.lua <input_file> <output_file> [flags]")
     print("Options:")
     print("  --minify                   minifies the output for smaller output size")
-    print("  --constantprotection       encrypts constants for stronger constant security")
     print("  --antitamper               injects anti-tamper checks to detect script modification")
     print("  --controlflowflattening    flattens control flow for simple obfuscation hardening")
     print("  --encryptstrings           encrypts string constants in output")
     print("  --numexpr                  replaces integer literals with equivalent math expressions")
-    print("  --blockshuffle             mangled block IDs + shuffled dispatch table")
     print("  --luau                     use Luau 80+ opcode set (default: Lua 5.1 38 opcodes)")
     print("  --debug                    enables debugging tools to help diagnose errors")
     print("  --silent                   suppresses all output messages")
@@ -242,14 +240,12 @@ if not outputFile or isFlag(outputFile) then
 end
 
 -- Settings inputs
-settings.ConstantProtection    = table.find(args,"--constantprotection") and true or false
 settings.Minify                = table.find(args,"--minify") and true or false
 settings.Debug                 = table.find(args,"--debug") and true or false
 settings.AntiTamper            = table.find(args,"--antitamper") and true or false
 settings.EncryptStrings        = table.find(args,"--encryptstrings") and true or false
 settings.ControlFlowFlattening = table.find(args,"--controlflowflattening") and true or false
 settings.NumberToExpressions   = table.find(args,"--numexpr") and true or false
-settings.BlockShuffle          = table.find(args,"--blockshuffle") and true or false
 settings.LuaUCompatibility     = table.find(args,"--luau") and true or false
 settings.LuauMode              = table.find(args,"--luau") and true or false
 
